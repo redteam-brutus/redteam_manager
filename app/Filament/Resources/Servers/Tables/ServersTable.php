@@ -7,6 +7,7 @@ namespace App\Filament\Resources\Servers\Tables;
 use App\Enums\ConnectionStatus;
 use App\Filament\Resources\Servers\Actions\TestConnectionAction;
 use App\Filament\Resources\Servers\Pages\ManageForgeSites;
+use App\Filament\Resources\Servers\Pages\ManageServerAntibot;
 use App\Filament\Resources\Servers\Pages\ManageServerNginx;
 use Filament\Actions\Action;
 use Filament\Actions\BulkActionGroup;
@@ -66,6 +67,11 @@ class ServersTable
                     ->icon(Heroicon::OutlinedCodeBracket)
                     ->color('gray')
                     ->url(fn ($record): string => ManageForgeSites::getUrl(['record' => $record])),
+                Action::make('antibot')
+                    ->label('Anti-bot')
+                    ->icon(Heroicon::OutlinedShieldCheck)
+                    ->color('gray')
+                    ->url(fn ($record): string => ManageServerAntibot::getUrl(['record' => $record])),
                 EditAction::make(),
                 DeleteAction::make(),
             ])
