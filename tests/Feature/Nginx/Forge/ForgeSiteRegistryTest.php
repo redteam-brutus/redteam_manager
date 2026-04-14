@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\Models\Server;
 use App\Services\Nginx\Forge\Dto\ForgeSiteSettings;
 use App\Services\Nginx\Forge\ForgeSiteRegistry;
+use App\Services\Nginx\Forge\ForgeSiteSettingsParser;
 use App\Services\Nginx\Forge\ForgeSiteSettingsRenderer;
 use App\Services\Nginx\NginxManager;
 use App\Services\Ssh\Contracts\SshClient;
@@ -189,6 +190,55 @@ it('disable is a no-op when no managed file exists', function () {
 
     expect($result->ok)->toBeTrue()
         ->and($result->output)->toBe('Already disabled.');
+});
+
+it('renderer emits a gated scenario map when restrictToTargetPages is on', function () {
+    $renderer = new ForgeSiteSettingsRenderer;
+
+    $content = $renderer->render('3075741', new ForgeSiteSettings(
+        analyticsEnabled: true,
+        scriptBody: '<script>x</script>',
+        restrictToTargetPages: true,
+    ));
+
+    expect($content)->toContain('map $is_target_page $site_3075741_analytics_script')
+        ->and($content)->toContain('sub_filter \'</head>\' $site_3075741_analytics_script;')
+        ->and($content)->not->toContain("sub_filter '</head>' '<script>");
+});
+
+it('renderer emits ungated analytics when restrictToTargetPages is off', function () {
+    $renderer = new ForgeSiteSettingsRenderer;
+
+    $content = $renderer->render('3075741', new ForgeSiteSettings(
+        analyticsEnabled: true,
+        scriptBody: '<script>x</script>',
+        restrictToTargetPages: false,
+    ));
+
+    expect($content)->not->toContain('$site_3075741_analytics_script')
+        ->and($content)->toContain("sub_filter '</head>' '<script>x</script></head>';");
+});
+
+it('parser round-trips a gated analytics managed file', function () {
+    $renderer = new ForgeSiteSettingsRenderer;
+    $parser = new ForgeSiteSettingsParser;
+
+    $original = new ForgeSiteSettings(
+        analyticsEnabled: true,
+        scriptBody: '<script>console.log("hi")</script>',
+        conditionalAccessLog: true,
+        accessLogPath: '/var/log/nginx/site-fbclid.log',
+        restrictToTargetPages: true,
+    );
+
+    $parsed = $parser->parse($renderer->render('3075741', $original));
+
+    expect($parsed->analyticsEnabled)->toBeTrue()
+        ->and($parsed->restrictToTargetPages)->toBeTrue()
+        ->and($parsed->trackingTag)->toBe('</head>')
+        ->and($parsed->scriptBody)->toBe('<script>console.log("hi")</script>')
+        ->and($parsed->conditionalAccessLog)->toBeTrue()
+        ->and($parsed->accessLogPath)->toBe('/var/log/nginx/site-fbclid.log');
 });
 
 it('rejects non-numeric site ids', function () {

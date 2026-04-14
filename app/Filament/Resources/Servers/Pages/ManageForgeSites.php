@@ -118,6 +118,7 @@ class ManageForgeSites extends Page
             'analyticsEnabled' => $site->settings->analyticsEnabled,
             'trackingTag' => $site->settings->trackingTag,
             'scriptBody' => $site->settings->scriptBody,
+            'restrictToTargetPages' => $site->settings->restrictToTargetPages,
             'conditionalAccessLog' => $site->settings->conditionalAccessLog,
             'accessLogPath' => $site->settings->accessLogPath,
         ];
@@ -153,6 +154,10 @@ class ManageForgeSites extends Page
                         Textarea::make('scriptBody')
                             ->rows(6)
                             ->helperText('Inline <script>…</script> HTML. Keep single quotes escaped — renderer escapes them for nginx.')
+                            ->live(debounce: 400),
+                        Toggle::make('restrictToTargetPages')
+                            ->label('Only inject on target pages')
+                            ->helperText('Requires the anti-bot conf to be active with at least one target page configured.')
                             ->live(debounce: 400),
                     ]),
                 Section::make('Conditional access log')
@@ -223,6 +228,7 @@ class ManageForgeSites extends Page
                 'analyticsEnabled' => false,
                 'trackingTag' => '</head>',
                 'scriptBody' => '',
+                'restrictToTargetPages' => false,
                 'conditionalAccessLog' => false,
                 'accessLogPath' => '',
             ];
@@ -305,6 +311,7 @@ class ManageForgeSites extends Page
             scriptBody: (string) ($data['scriptBody'] ?? ''),
             conditionalAccessLog: (bool) ($data['conditionalAccessLog'] ?? false),
             accessLogPath: (string) ($data['accessLogPath'] ?? ''),
+            restrictToTargetPages: (bool) ($data['restrictToTargetPages'] ?? false),
         );
     }
 

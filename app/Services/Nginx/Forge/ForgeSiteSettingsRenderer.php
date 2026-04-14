@@ -40,14 +40,25 @@ class ForgeSiteSettingsRenderer
                 ? $settings->trackingTag
                 : '</head>';
 
-            $parts[] = '# --- analytics injection ---';
-            $parts[] = 'sub_filter_once on;';
-            $parts[] = sprintf(
-                "sub_filter '%s' '%s%s';",
-                $this->escapeSingleQuoted($tag),
-                $this->escapeSingleQuoted($settings->scriptBody),
-                $this->escapeSingleQuoted($tag),
-            );
+            $escapedTag = $this->escapeSingleQuoted($tag);
+            $escapedReplacement = $this->escapeSingleQuoted($settings->scriptBody).$escapedTag;
+
+            if ($settings->restrictToTargetPages) {
+                $var = "site_{$siteId}_analytics_script";
+
+                $parts[] = '# --- analytics injection (gated on $is_target_page) ---';
+                $parts[] = sprintf('map $is_target_page $%s {', $var);
+                $parts[] = sprintf("    default '%s';", $escapedTag);
+                $parts[] = sprintf("    1       '%s';", $escapedReplacement);
+                $parts[] = '}';
+                $parts[] = 'sub_filter_once on;';
+                $parts[] = sprintf("sub_filter '%s' \$%s;", $escapedTag, $var);
+            } else {
+                $parts[] = '# --- analytics injection ---';
+                $parts[] = 'sub_filter_once on;';
+                $parts[] = sprintf("sub_filter '%s' '%s';", $escapedTag, $escapedReplacement);
+            }
+
             $parts[] = '';
         }
 

@@ -10,13 +10,48 @@ class ForgeSiteSettingsParser
 {
     public function parse(string $content): ForgeSiteSettings
     {
+        $gated = $this->extractGatedAnalytics($content);
+
+        if ($gated !== null) {
+            return new ForgeSiteSettings(
+                analyticsEnabled: true,
+                trackingTag: $gated['tag'],
+                scriptBody: $gated['body'],
+                conditionalAccessLog: $this->hasConditionalAccessLog($content),
+                accessLogPath: $this->extractAccessLogPath($content) ?? '',
+                restrictToTargetPages: true,
+            );
+        }
+
         return new ForgeSiteSettings(
             analyticsEnabled: $this->hasAnalytics($content),
             trackingTag: $this->extractTrackingTag($content) ?? '</head>',
             scriptBody: $this->extractScriptBody($content) ?? '',
             conditionalAccessLog: $this->hasConditionalAccessLog($content),
             accessLogPath: $this->extractAccessLogPath($content) ?? '',
+            restrictToTargetPages: false,
         );
+    }
+
+    /**
+     * @return array{tag: string, body: string}|null
+     */
+    private function extractGatedAnalytics(string $content): ?array
+    {
+        $pattern = '/map\s+\$is_target_page\s+\$site_[0-9]+_analytics_script\s*\{\s*default\s+\'((?:\\\\.|[^\'\\\\])*)\'\s*;\s*1\s+\'((?:\\\\.|[^\'\\\\])*)\'\s*;\s*\}/';
+
+        if (preg_match($pattern, $content, $m) !== 1) {
+            return null;
+        }
+
+        $tag = $this->unescapeSingleQuoted($m[1]);
+        $replacement = $this->unescapeSingleQuoted($m[2]);
+
+        $body = str_ends_with($replacement, $tag)
+            ? substr($replacement, 0, -strlen($tag))
+            : $replacement;
+
+        return ['tag' => $tag, 'body' => $body];
     }
 
     private function hasAnalytics(string $content): bool
@@ -71,6 +106,8 @@ class ForgeSiteSettingsParser
 
     private function subFilterPattern(): string
     {
+        // Only matches the non-gated form: `sub_filter 'tag' 'replacement';`.
+        // The gated form uses a variable (no quote after the tag), which this pattern deliberately won't match.
         return '/sub_filter\s+\'((?:\\\\.|[^\'\\\\])*)\'\s+\'((?:\\\\.|[^\'\\\\])*)\'\s*;/';
     }
 

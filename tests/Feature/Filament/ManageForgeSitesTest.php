@@ -109,6 +109,26 @@ it('notifies danger when nginx -t rejects the new managed file', function () {
         ->assertNotified('Save refused — config invalid');
 });
 
+it('hydrates restrictToTargetPages from a gated managed file', function () {
+    $renderer = new ForgeSiteSettingsRenderer;
+    $content = $renderer->render('3075741', new ForgeSiteSettings(
+        analyticsEnabled: true,
+        scriptBody: '<script>gated</script>',
+        restrictToTargetPages: true,
+    ));
+
+    $this->fake->shouldReturn(0, "/etc/nginx/forge-conf/3075741/site.conf\n");
+    $this->fake->withFile('/etc/nginx/forge-conf/3075741/server/redteam-analytics.conf', $content);
+
+    $server = serverForForgePage();
+
+    Livewire::test(ManageForgeSites::class, ['record' => $server->id])
+        ->call('selectSite', '3075741')
+        ->assertSet('data.restrictToTargetPages', true)
+        ->assertSet('data.analyticsEnabled', true)
+        ->assertSet('data.scriptBody', '<script>gated</script>');
+});
+
 it('disables a managed file via the disable action', function () {
     $this->fake->shouldReturn(0, "/etc/nginx/forge-conf/3075741/site.conf\n");
     $this->fake->shouldReturnForCommand('nginx -t', 0, "ok\n");

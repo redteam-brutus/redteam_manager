@@ -12,6 +12,7 @@ final readonly class ForgeSiteSettings
         public string $scriptBody = '',
         public bool $conditionalAccessLog = false,
         public string $accessLogPath = '',
+        public bool $restrictToTargetPages = false,
     ) {}
 
     public function isEmpty(): bool
