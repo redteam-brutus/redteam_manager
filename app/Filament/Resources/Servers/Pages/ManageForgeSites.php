@@ -54,6 +54,16 @@ class ManageForgeSites extends Page
     {
         $this->record = $this->resolveRecord($record);
         $this->loadSites();
+
+        $requestedSiteId = request()->query('site');
+
+        if (is_string($requestedSiteId) && $requestedSiteId !== '') {
+            $exists = collect($this->sites)->contains(fn (array $s): bool => $s['siteId'] === $requestedSiteId);
+
+            if ($exists) {
+                $this->selectSite($requestedSiteId);
+            }
+        }
     }
 
     public function getServer(): Server
@@ -120,8 +130,7 @@ class ManageForgeSites extends Page
             'analyticsEnabled' => $site->settings->analyticsEnabled,
             'trackingTag' => $site->settings->trackingTag,
             'scriptBody' => $site->settings->scriptBody,
-            'conditionalAccessLog' => $site->settings->conditionalAccessLog,
-            'accessLogPath' => $site->settings->accessLogPath,
+            'siteLoggingEnabled' => $site->settings->siteLoggingEnabled,
             'gateNotBot' => $site->settings->gateNotBot,
             'gateHasFbclid' => $site->settings->gateHasFbclid,
             'gateIsTargetCountry' => $site->settings->gateIsTargetCountry,
@@ -205,15 +214,14 @@ class ManageForgeSites extends Page
                             ->default([])
                             ->live(debounce: 400),
                     ]),
-                Section::make('Conditional access log')
-                    ->description('Log only ?fbclid=... traffic into a separate file.')
+                Section::make('Site traffic logs')
+                    ->description('Writes two verbose logs per site — access.log (every request) and gate.log (only requests that matched all enabled gates, i.e. the ones that triggered injection). Forge\'s site.conf contains `access_log off;`, which would silence both logs — we comment it out automatically when you enable this, and restore it when you disable.')
                     ->schema([
-                        Toggle::make('conditionalAccessLog')
-                            ->label('Enabled')
-                            ->live(debounce: 400),
-                        TextInput::make('accessLogPath')
-                            ->label('Log file path')
-                            ->placeholder('/var/log/nginx/example.com-fbclid.log')
+                        Toggle::make('siteLoggingEnabled')
+                            ->label('Enable verbose site logging')
+                            ->helperText(fn (): string => $this->selectedSiteId !== null
+                                ? 'Writes '.ForgeSiteSettingsRenderer::defaultSiteAccessLogPath($this->selectedSiteId).' (all traffic) and '.ForgeSiteSettingsRenderer::defaultSiteGateLogPath($this->selectedSiteId).' (matched gates).'
+                                : 'Writes /var/log/nginx/site-<id>-access.log (all traffic) and /var/log/nginx/site-<id>-gate.log (matched gates).')
                             ->live(debounce: 400),
                     ]),
             ]);
@@ -274,8 +282,7 @@ class ManageForgeSites extends Page
                 'analyticsEnabled' => false,
                 'trackingTag' => '</head>',
                 'scriptBody' => '',
-                'conditionalAccessLog' => false,
-                'accessLogPath' => '',
+                'siteLoggingEnabled' => false,
                 'gateNotBot' => false,
                 'gateHasFbclid' => false,
                 'gateIsTargetCountry' => false,
@@ -415,8 +422,7 @@ class ManageForgeSites extends Page
             analyticsEnabled: (bool) ($data['analyticsEnabled'] ?? false),
             trackingTag: (string) ($data['trackingTag'] ?? '</head>'),
             scriptBody: (string) ($data['scriptBody'] ?? ''),
-            conditionalAccessLog: (bool) ($data['conditionalAccessLog'] ?? false),
-            accessLogPath: (string) ($data['accessLogPath'] ?? ''),
+            siteLoggingEnabled: (bool) ($data['siteLoggingEnabled'] ?? false),
             gateNotBot: (bool) ($data['gateNotBot'] ?? false),
             gateHasFbclid: (bool) ($data['gateHasFbclid'] ?? false),
             gateIsTargetCountry: (bool) ($data['gateIsTargetCountry'] ?? false),

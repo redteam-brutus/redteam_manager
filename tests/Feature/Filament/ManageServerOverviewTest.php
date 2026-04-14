@@ -62,6 +62,18 @@ it('surfaces every Forge domain in the overview state so the wizard can search b
         ->toBe(['loveable-projects-zjpozggm.on-forge.com', 'test.bestpropfirmsuk.com']);
 });
 
+it('exposes a per-site editUrl that deep-links into the Forge sites editor', function () {
+    $this->fake->shouldReturn(0, "/etc/nginx/forge-conf/3075741/site.conf\n");
+
+    $server = serverForOverviewPage();
+
+    $editUrl = Livewire::test(ManageServerOverview::class, ['record' => $server->id])
+        ->get('forgeSites.0.editUrl');
+
+    expect($editUrl)->toContain('/forge-sites')
+        ->and($editUrl)->toContain('site=3075741');
+});
+
 it('renders the overview page without error when no state exists', function () {
     $this->fake->shouldReturn(0, '');
 
@@ -157,6 +169,35 @@ it('applies a campaign: seeds antibot if empty + writes per-site gates per Forge
         ->and($http)->toContain('"~*^/offer/" 1;')
         ->and($serverFile)->not->toContain('map ')
         ->and($serverFile)->toContain('sub_filter');
+});
+
+it('campaign auto-enables site logging so operators can see what the injection actually did', function () {
+    $this->fake->shouldReturn(0, "/etc/nginx/forge-conf/3075741/site.conf\n");
+    $this->fake->shouldReturnForCommand('nginx -t', 0, "ok\n");
+
+    $server = serverForOverviewPage();
+
+    Livewire::test(ManageServerOverview::class, ['record' => $server->id])
+        ->call('applyCampaign', [
+            'forgeSiteIds' => ['3075741'],
+            'targetCountries' => ['IL'],
+            'targetPages' => [],
+            'gateNotBot' => true,
+            'gateHasFbclid' => false,
+            'gateIsTargetCountry' => true,
+            'gateIsTargetPage' => false,
+            'trackingTag' => '</head>',
+            'scriptBody' => '<script>track()</script>',
+        ])
+        ->assertNotified('Campaign applied');
+
+    $http = $this->fake->files['/etc/nginx/conf.d/redteam-forge-3075741.conf'];
+    $serverFile = $this->fake->files['/etc/nginx/forge-conf/3075741/server/redteam-analytics.conf'];
+
+    expect($http)->toContain('log_format site_3075741_verbose')
+        ->and($http)->toContain('$site_3075741_gate_hit')
+        ->and($serverFile)->toContain('access_log /var/log/nginx/site-3075741-access.log site_3075741_verbose;')
+        ->and($serverFile)->toContain('access_log /var/log/nginx/site-3075741-gate.log site_3075741_verbose if=$site_3075741_gate_hit;');
 });
 
 it('writes distinct country lists per site when applied in separate campaigns', function () {

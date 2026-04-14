@@ -39,6 +39,26 @@ it('mounts and loads the forge site list', function () {
         ->assertSet('sites.0.hasManaged', false);
 });
 
+it('auto-selects the site named in the ?site= query param on mount', function () {
+    $this->fake->shouldReturn(0, "/etc/nginx/forge-conf/3075741/site.conf\n/etc/nginx/forge-conf/3075742/site.conf\n");
+
+    $server = serverForForgePage();
+
+    Livewire::withQueryParams(['site' => '3075742'])
+        ->test(ManageForgeSites::class, ['record' => $server->id])
+        ->assertSet('selectedSiteId', '3075742');
+});
+
+it('ignores an unknown ?site= query param rather than erroring out', function () {
+    $this->fake->shouldReturn(0, "/etc/nginx/forge-conf/3075741/site.conf\n");
+
+    $server = serverForForgePage();
+
+    Livewire::withQueryParams(['site' => '9999999'])
+        ->test(ManageForgeSites::class, ['record' => $server->id])
+        ->assertSet('selectedSiteId', null);
+});
+
 it('selects a site and hydrates the form from an existing managed file', function () {
     $rendered = (new ForgeSiteSettingsRenderer)->render('3075741', new ForgeSiteSettings(
         analyticsEnabled: true,
@@ -86,7 +106,7 @@ it('disables a site when all toggles are off', function () {
     Livewire::test(ManageForgeSites::class, ['record' => $server->id])
         ->call('selectSite', '3075741')
         ->set('data.analyticsEnabled', false)
-        ->set('data.conditionalAccessLog', false)
+        ->set('data.siteLoggingEnabled', false)
         ->call('saveSite')
         ->assertNotified('Saved');
 

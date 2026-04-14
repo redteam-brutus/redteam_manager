@@ -12,6 +12,8 @@ class ForgeSiteSettingsRenderer
 {
     private const TAG_WHITELIST = ['</head>', '</body>', '<head>', '<body>'];
 
+    private const VERBOSE_LOG_FORMAT = '[$time_local] Host: $host | IP: $remote_addr | ReqID: $request_id | Path: $uri | Request URI: $request_uri | FBCLID: $arg_fbclid | UA: "$http_user_agent" | ISO: "$http_cf_ipcountry" | Prefetch: [$http_sec_fetch_dest] | Turbolink: [$http_x_requested_with] | client hints: [$http_sec_ch_ua] -  [$http_sec_ch_ua_platform] -  [$http_sec_ch_ua_mobile]';
+
     /**
      * Fixed-order signal table. Gate field → nginx variable name + required value + whether the
      * variable is global (defined by antibot) or site-scoped (defined by this site's http file).
@@ -24,6 +26,16 @@ class ForgeSiteSettingsRenderer
         ['field' => 'gateIsTargetCountry', 'var' => 'is_target_country', 'value' => '1', 'scope' => 'site'],
         ['field' => 'gateIsTargetPage',    'var' => 'is_target_page',    'value' => '1', 'scope' => 'site'],
     ];
+
+    public static function defaultSiteAccessLogPath(string $siteId): string
+    {
+        return "/var/log/nginx/site-{$siteId}-access.log";
+    }
+
+    public static function defaultSiteGateLogPath(string $siteId): string
+    {
+        return "/var/log/nginx/site-{$siteId}-gate.log";
+    }
 
     public function render(string $siteId, ForgeSiteSettings $settings): RenderedForgeSite
     {
@@ -41,7 +53,8 @@ class ForgeSiteSettingsRenderer
 
         $enabled = $this->enabledSignals($settings);
         $scriptVar = "site_{$siteId}_analytics_script";
-        $logVar = "site_{$siteId}_log_fbclid";
+        $gateHitVar = "site_{$siteId}_gate_hit";
+        $logFormatName = "site_{$siteId}_verbose";
         $hasFbclidVar = "site_{$siteId}_has_fbclid";
         $targetCountryVar = "site_{$siteId}_is_target_country";
         $targetPageVar = "site_{$siteId}_is_target_page";
@@ -63,25 +76,48 @@ class ForgeSiteSettingsRenderer
         $httpHasContent = false;
         $serverHasContent = false;
 
-        if ($settings->conditionalAccessLog && $settings->accessLogPath !== '') {
-            $httpParts[] = '# --- conditional access log helper ---';
-            $httpParts[] = "map \$arg_fbclid \${$logVar} {";
-            $httpParts[] = '    default 0;';
-            $httpParts[] = '    ~.+     1;';
-            $httpParts[] = '}';
-            $httpParts[] = '';
-            $httpHasContent = true;
+        // Gate variable definitions (shared by gated analytics + gate_hit logging).
+        if ($enabled !== []) {
+            if ($settings->gateHasFbclid) {
+                $httpParts[] = "# --- \${$hasFbclidVar} helper ---";
+                $httpParts[] = "map \$arg_fbclid \${$hasFbclidVar} {";
+                $httpParts[] = '    default 1;';
+                $httpParts[] = '    ""      0;';
+                $httpParts[] = '}';
+                $httpParts[] = '';
+                $httpHasContent = true;
+            }
 
-            $serverParts[] = '# --- conditional access log ---';
-            $serverParts[] = sprintf(
-                'access_log %s combined if=$%s;',
-                $this->escapeSingleQuoted($settings->accessLogPath),
-                $logVar,
-            );
-            $serverParts[] = '';
-            $serverHasContent = true;
+            if ($settings->gateIsTargetCountry) {
+                $httpParts[] = "# --- \${$targetCountryVar} (per-site) ---";
+                $httpParts[] = "map \$http_cf_ipcountry \${$targetCountryVar} {";
+                $httpParts[] = '    default 0;';
+
+                foreach ($settings->targetCountries as $code) {
+                    $httpParts[] = sprintf('    "%s" 1;', $code);
+                }
+
+                $httpParts[] = '}';
+                $httpParts[] = '';
+                $httpHasContent = true;
+            }
+
+            if ($settings->gateIsTargetPage) {
+                $httpParts[] = "# --- \${$targetPageVar} (per-site) ---";
+                $httpParts[] = "map \$request_uri \${$targetPageVar} {";
+                $httpParts[] = '    default 0;';
+
+                foreach ($settings->targetPages as $body) {
+                    $httpParts[] = sprintf('    "~*%s" 1;', $body);
+                }
+
+                $httpParts[] = '}';
+                $httpParts[] = '';
+                $httpHasContent = true;
+            }
         }
 
+        // Analytics injection.
         if ($settings->analyticsEnabled && $settings->scriptBody !== '') {
             $tag = in_array($settings->trackingTag, self::TAG_WHITELIST, true)
                 ? $settings->trackingTag
@@ -98,44 +134,6 @@ class ForgeSiteSettingsRenderer
                 $serverParts[] = '';
                 $serverHasContent = true;
             } else {
-                if ($settings->gateHasFbclid) {
-                    $httpParts[] = "# --- \${$hasFbclidVar} helper ---";
-                    $httpParts[] = "map \$arg_fbclid \${$hasFbclidVar} {";
-                    $httpParts[] = '    default 1;';
-                    $httpParts[] = '    ""      0;';
-                    $httpParts[] = '}';
-                    $httpParts[] = '';
-                    $httpHasContent = true;
-                }
-
-                if ($settings->gateIsTargetCountry) {
-                    $httpParts[] = "# --- \${$targetCountryVar} (per-site) ---";
-                    $httpParts[] = "map \$http_cf_ipcountry \${$targetCountryVar} {";
-                    $httpParts[] = '    default 0;';
-
-                    foreach ($settings->targetCountries as $code) {
-                        $httpParts[] = sprintf('    "%s" 1;', $code);
-                    }
-
-                    $httpParts[] = '}';
-                    $httpParts[] = '';
-                    $httpHasContent = true;
-                }
-
-                if ($settings->gateIsTargetPage) {
-                    $httpParts[] = "# --- \${$targetPageVar} (per-site) ---";
-                    $httpParts[] = "map \$request_uri \${$targetPageVar} {";
-                    $httpParts[] = '    default 0;';
-
-                    foreach ($settings->targetPages as $body) {
-                        $httpParts[] = sprintf('    "~*%s" 1;', $body);
-                    }
-
-                    $httpParts[] = '}';
-                    $httpParts[] = '';
-                    $httpHasContent = true;
-                }
-
                 $httpParts[] = '# --- analytics injection (gated) ---';
 
                 if (count($enabled) === 1) {
@@ -146,12 +144,7 @@ class ForgeSiteSettingsRenderer
                     $httpParts[] = sprintf("    %s       '%s';", $signal['value'], $escapedReplacement);
                     $httpParts[] = '}';
                 } else {
-                    $keyVars = implode(':', array_map(
-                        fn (array $s): string => '$'.$this->resolveSignalVar($s, $siteId),
-                        $enabled,
-                    ));
-                    $keyValues = implode(':', array_map(fn (array $s): string => $s['value'], $enabled));
-
+                    [$keyVars, $keyValues] = $this->compositeKey($enabled, $siteId);
                     $httpParts[] = sprintf('map "%s" $%s {', $keyVars, $scriptVar);
                     $httpParts[] = sprintf("    default '%s';", $escapedTag);
                     $httpParts[] = sprintf("    \"%s\"      '%s';", $keyValues, $escapedReplacement);
@@ -167,6 +160,58 @@ class ForgeSiteSettingsRenderer
                 $serverParts[] = '';
                 $serverHasContent = true;
             }
+        }
+
+        // Site traffic logs — always-on access log + gate-matched log.
+        if ($settings->siteLoggingEnabled) {
+            $httpParts[] = "# --- verbose log format for site {$siteId} ---";
+            $httpParts[] = sprintf(
+                "log_format %s escape=none '%s';",
+                $logFormatName,
+                $this->escapeSingleQuoted(self::VERBOSE_LOG_FORMAT),
+            );
+            $httpParts[] = '';
+            $httpHasContent = true;
+
+            if ($enabled !== []) {
+                $httpParts[] = "# --- \${$gateHitVar} (all enabled gates matched) ---";
+
+                if (count($enabled) === 1) {
+                    $signal = $enabled[0];
+                    $signalVar = $this->resolveSignalVar($signal, $siteId);
+                    $httpParts[] = sprintf('map $%s $%s {', $signalVar, $gateHitVar);
+                    $httpParts[] = '    default 0;';
+                    $httpParts[] = sprintf('    %s       1;', $signal['value']);
+                    $httpParts[] = '}';
+                } else {
+                    [$keyVars, $keyValues] = $this->compositeKey($enabled, $siteId);
+                    $httpParts[] = sprintf('map "%s" $%s {', $keyVars, $gateHitVar);
+                    $httpParts[] = '    default 0;';
+                    $httpParts[] = sprintf('    "%s"      1;', $keyValues);
+                    $httpParts[] = '}';
+                }
+
+                $httpParts[] = '';
+            }
+
+            $serverParts[] = '# --- site traffic logs ---';
+            $serverParts[] = sprintf(
+                'access_log %s %s;',
+                self::defaultSiteAccessLogPath($siteId),
+                $logFormatName,
+            );
+
+            if ($enabled !== []) {
+                $serverParts[] = sprintf(
+                    'access_log %s %s if=$%s;',
+                    self::defaultSiteGateLogPath($siteId),
+                    $logFormatName,
+                    $gateHitVar,
+                );
+            }
+
+            $serverParts[] = '';
+            $serverHasContent = true;
         }
 
         return new RenderedForgeSite(
@@ -189,6 +234,21 @@ class ForgeSiteSettingsRenderer
         }
 
         return $enabled;
+    }
+
+    /**
+     * @param  list<array{field: string, var: string, value: string, scope: string}>  $enabled
+     * @return array{0: string, 1: string} [joined key vars, joined key values]
+     */
+    private function compositeKey(array $enabled, string $siteId): array
+    {
+        $keyVars = implode(':', array_map(
+            fn (array $s): string => '$'.$this->resolveSignalVar($s, $siteId),
+            $enabled,
+        ));
+        $keyValues = implode(':', array_map(fn (array $s): string => $s['value'], $enabled));
+
+        return [$keyVars, $keyValues];
     }
 
     /**

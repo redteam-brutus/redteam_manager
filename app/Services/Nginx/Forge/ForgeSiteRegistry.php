@@ -16,6 +16,13 @@ class ForgeSiteRegistry
 {
     private const SERVER_FILENAME = 'redteam-analytics.conf';
 
+    /**
+     * Sentinel used to mark our edit of Forge's site.conf. Makes the edit idempotent
+     * and reversible: we match on this marker to restore the original line when
+     * site logging is turned off.
+     */
+    private const ACCESS_LOG_SENTINEL = '# disabled by redteam-manager (site logging enabled)';
+
     public function __construct(
         private readonly NginxManager $nginx,
         private readonly ForgeSiteSettingsParser $parser,
@@ -99,41 +106,104 @@ class ForgeSiteRegistry
         }
 
         $rendered = $this->renderer->render($siteId, $settings);
-        $httpPath = $this->httpManagedPath($siteId);
-        $serverPath = $this->serverManagedPath($siteId);
 
-        $httpResult = $rendered->httpContext !== ''
-            ? $this->nginx->writeManagedFile($server, $httpPath, $rendered->httpContext)
-            : $this->nginx->deleteManagedFile($server, $httpPath);
+        $result = $this->nginx->applyManagedFilesAtomic($server, [
+            $this->httpManagedPath($siteId) => $rendered->httpContext !== '' ? $rendered->httpContext : null,
+            $this->serverManagedPath($siteId) => $rendered->serverContext !== '' ? $rendered->serverContext : null,
+        ]);
 
-        if (! $httpResult->ok) {
-            return $httpResult;
+        if (! $result->ok) {
+            return $result;
         }
 
-        if ($rendered->serverContext === '') {
-            return $this->nginx->deleteManagedFile($server, $serverPath);
-        }
-
-        $serverResult = $this->nginx->writeManagedFile($server, $serverPath, $rendered->serverContext);
-
-        if (! $serverResult->ok && $rendered->httpContext !== '') {
-            $this->nginx->deleteManagedFile($server, $httpPath);
-        }
-
-        return $serverResult;
+        return $this->applySiteConfAccessLogToggle($server, $siteId, $settings->siteLoggingEnabled, $result);
     }
 
     public function disable(Server $server, string $siteId): NginxSaveResult
     {
         $this->assertSiteId($siteId);
 
-        $serverResult = $this->nginx->deleteManagedFile($server, $this->serverManagedPath($siteId));
+        $result = $this->nginx->applyManagedFilesAtomic($server, [
+            $this->httpManagedPath($siteId) => null,
+            $this->serverManagedPath($siteId) => null,
+        ]);
 
-        if (! $serverResult->ok) {
-            return $serverResult;
+        if (! $result->ok) {
+            return $result;
         }
 
-        return $this->nginx->deleteManagedFile($server, $this->httpManagedPath($siteId));
+        return $this->applySiteConfAccessLogToggle($server, $siteId, false, $result);
+    }
+
+    /**
+     * Ensure Forge's site.conf access_log line matches the requested state. Non-fatal on failure:
+     * the managed files are already in place, so we annotate the prior success result rather than
+     * reporting an error.
+     */
+    private function applySiteConfAccessLogToggle(
+        Server $server,
+        string $siteId,
+        bool $siteLoggingEnabled,
+        NginxSaveResult $priorResult,
+    ): NginxSaveResult {
+        $result = $this->toggleSiteConfAccessLog($server, $siteId, $siteLoggingEnabled);
+
+        if ($result->ok || $result->status === 'noop') {
+            return $priorResult;
+        }
+
+        return new NginxSaveResult(
+            ok: true,
+            status: $priorResult->status,
+            output: trim($priorResult->output."\nWarning: access_log off toggle in site.conf: {$result->output}"),
+            backupPath: $priorResult->backupPath,
+        );
+    }
+
+    private function toggleSiteConfAccessLog(Server $server, string $siteId, bool $siteLoggingEnabled): NginxSaveResult
+    {
+        $path = $this->nginxRoot."/forge-conf/{$siteId}/site.conf";
+
+        try {
+            if (! $this->nginx->fileExists($server, $path)) {
+                return new NginxSaveResult(ok: true, status: 'noop', output: 'site.conf not present; skipped.');
+            }
+
+            $current = $this->nginx->readFile($server, $path);
+        } catch (SshException $e) {
+            return new NginxSaveResult(ok: false, status: 'io_error', output: "Could not read {$path}: ".$e->getMessage());
+        }
+
+        $patched = $siteLoggingEnabled
+            ? $this->commentAccessLogOff($current)
+            : $this->restoreAccessLogOff($current);
+
+        if ($patched === $current) {
+            return new NginxSaveResult(ok: true, status: 'noop', output: 'site.conf already in desired state.');
+        }
+
+        try {
+            $hash = $this->nginx->fileHash($server, $path);
+        } catch (SshException $e) {
+            return new NginxSaveResult(ok: false, status: 'io_error', output: $e->getMessage());
+        }
+
+        return $this->nginx->saveFile($server, $path, $patched, $hash);
+    }
+
+    private function commentAccessLogOff(string $content): string
+    {
+        $pattern = '/^(\s*)access_log\s+off\s*;\s*$/m';
+        $replacement = '$1# access_log off; '.self::ACCESS_LOG_SENTINEL;
+
+        return preg_replace($pattern, $replacement, $content) ?? $content;
+    }
+
+    private function restoreAccessLogOff(string $content): string
+    {
+        $pattern = '/^(\s*)# access_log off; '.preg_quote(self::ACCESS_LOG_SENTINEL, '/').'\s*$/m';
+
+        return preg_replace($pattern, '$1access_log off;', $content) ?? $content;
     }
 
     private function safeReadFile(Server $server, string $path): ?string

@@ -44,7 +44,7 @@ class ManageServerOverview extends Page
         'hasManaged' => false,
     ];
 
-    /** @var list<array{siteId:string,firstDomain:?string,domains:list<string>,hasManaged:bool,analyticsEnabled:bool,gates:list<string>,countries:list<string>,pageCount:int}> */
+    /** @var list<array{siteId:string,firstDomain:?string,domains:list<string>,hasManaged:bool,analyticsEnabled:bool,gates:list<string>,countries:list<string>,pageCount:int,editUrl:string}> */
     public array $forgeSites = [];
 
     public function mount(int|string $record): void
@@ -95,7 +95,9 @@ class ManageServerOverview extends Page
             return;
         }
 
-        $this->forgeSites = array_map(function ($site): array {
+        $serverId = $this->getServer()->id;
+
+        $this->forgeSites = array_map(function ($site) use ($serverId): array {
             $settings = $site->hasManaged
                 ? app(ForgeSiteRegistry::class)->find($this->getServer(), $site->siteId)->settings
                 : new ForgeSiteSettings;
@@ -109,6 +111,7 @@ class ManageServerOverview extends Page
                 'gates' => $this->gateLabels($settings),
                 'countries' => $settings->targetCountries,
                 'pageCount' => count($settings->targetPages),
+                'editUrl' => ManageForgeSites::getUrl(['record' => $serverId]).'?site='.urlencode($site->siteId),
             ];
         }, $sites);
     }
@@ -212,6 +215,7 @@ class ManageServerOverview extends Page
             analyticsEnabled: true,
             trackingTag: (string) ($data['trackingTag'] ?? '</head>'),
             scriptBody: $scriptBody,
+            siteLoggingEnabled: true,
             gateNotBot: $gateNotBot,
             gateHasFbclid: $gateHasFbclid,
             gateIsTargetCountry: $gateIsTargetCountry,

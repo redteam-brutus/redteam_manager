@@ -34,44 +34,57 @@
             @else
                 <ul class="space-y-3">
                     @foreach ($forgeSites as $site)
-                        <li class="rounded-md border border-gray-200 p-3 dark:border-white/10">
-                            <div class="flex flex-wrap items-center justify-between gap-2">
-                                <span class="font-mono text-xs text-gray-700 dark:text-gray-300">
-                                    {{ $site['siteId'] }}
-                                    @if ($site['firstDomain'])
-                                        <span class="text-gray-500 dark:text-gray-400"> — {{ $site['firstDomain'] }}</span>
-                                    @endif
-                                </span>
-                                @if ($site['analyticsEnabled'])
-                                    <x-filament::badge color="success" size="xs">injection on</x-filament::badge>
-                                @else
-                                    <x-filament::badge color="gray" size="xs">injection off</x-filament::badge>
+                        <li>
+                            <a
+                                href="{{ $site['editUrl'] }}"
+                                wire:navigate
+                                class="block rounded-md border border-gray-200 p-3 transition hover:border-primary-500 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-white/10 dark:hover:border-primary-400 dark:hover:bg-white/5"
+                                title="Edit Forge site {{ $site['siteId'] }}"
+                            >
+                                <div class="flex flex-wrap items-center justify-between gap-2">
+                                    <span class="font-mono text-xs text-gray-700 dark:text-gray-300">
+                                        {{ $site['siteId'] }}
+                                        @if ($site['firstDomain'])
+                                            <span class="text-gray-500 dark:text-gray-400"> — {{ $site['firstDomain'] }}</span>
+                                        @endif
+                                    </span>
+                                    <div class="flex items-center gap-1.5">
+                                        @if ($site['analyticsEnabled'])
+                                            <x-filament::badge color="success" size="xs">injection on</x-filament::badge>
+                                        @else
+                                            <x-filament::badge color="gray" size="xs">injection off</x-filament::badge>
+                                        @endif
+                                        <x-filament::icon
+                                            icon="heroicon-m-arrow-top-right-on-square"
+                                            class="h-3.5 w-3.5 text-gray-400 dark:text-gray-500"
+                                        />
+                                    </div>
+                                </div>
+                                @if (! empty($site['domains']))
+                                    <div class="mt-2 flex flex-wrap gap-1">
+                                        @foreach ($site['domains'] as $domain)
+                                            <x-filament::badge color="gray" size="xs">{{ $domain }}</x-filament::badge>
+                                        @endforeach
+                                    </div>
                                 @endif
-                            </div>
-                            @if (! empty($site['domains']))
-                                <div class="mt-2 flex flex-wrap gap-1">
-                                    @foreach ($site['domains'] as $domain)
-                                        <x-filament::badge color="gray" size="xs">{{ $domain }}</x-filament::badge>
-                                    @endforeach
-                                </div>
-                            @endif
-                            @if (! empty($site['gates']))
-                                <div class="mt-2 flex flex-wrap gap-1">
-                                    @foreach ($site['gates'] as $gate)
-                                        <x-filament::badge color="warning" size="xs">{{ $gate }}</x-filament::badge>
-                                    @endforeach
-                                </div>
-                            @endif
-                            @if (! empty($site['countries']) || $site['pageCount'] > 0)
-                                <div class="mt-2 flex flex-wrap gap-1">
-                                    @foreach ($site['countries'] as $country)
-                                        <x-filament::badge color="primary" size="xs">{{ $country }}</x-filament::badge>
-                                    @endforeach
-                                    @if ($site['pageCount'] > 0)
-                                        <x-filament::badge color="primary" size="xs">{{ $site['pageCount'] }} target page{{ $site['pageCount'] === 1 ? '' : 's' }}</x-filament::badge>
-                                    @endif
-                                </div>
-                            @endif
+                                @if (! empty($site['gates']))
+                                    <div class="mt-2 flex flex-wrap gap-1">
+                                        @foreach ($site['gates'] as $gate)
+                                            <x-filament::badge color="warning" size="xs">{{ $gate }}</x-filament::badge>
+                                        @endforeach
+                                    </div>
+                                @endif
+                                @if (! empty($site['countries']) || $site['pageCount'] > 0)
+                                    <div class="mt-2 flex flex-wrap gap-1">
+                                        @foreach ($site['countries'] as $country)
+                                            <x-filament::badge color="primary" size="xs">{{ $country }}</x-filament::badge>
+                                        @endforeach
+                                        @if ($site['pageCount'] > 0)
+                                            <x-filament::badge color="primary" size="xs">{{ $site['pageCount'] }} target page{{ $site['pageCount'] === 1 ? '' : 's' }}</x-filament::badge>
+                                        @endif
+                                    </div>
+                                @endif
+                            </a>
                         </li>
                     @endforeach
                 </ul>

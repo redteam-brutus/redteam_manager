@@ -14,8 +14,7 @@ final readonly class ForgeSiteSettings
         public bool $analyticsEnabled = false,
         public string $trackingTag = '</head>',
         public string $scriptBody = '',
-        public bool $conditionalAccessLog = false,
-        public string $accessLogPath = '',
+        public bool $siteLoggingEnabled = false,
         public bool $gateNotBot = false,
         public bool $gateHasFbclid = false,
         public bool $gateIsTargetCountry = false,
@@ -34,6 +33,6 @@ final readonly class ForgeSiteSettings
 
     public function isEmpty(): bool
     {
-        return ! $this->analyticsEnabled && ! $this->conditionalAccessLog;
+        return ! $this->analyticsEnabled && ! $this->siteLoggingEnabled;
     }
 }

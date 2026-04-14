@@ -33,8 +33,7 @@ class ForgeSiteSettingsParser
                 analyticsEnabled: true,
                 trackingTag: $gated['tag'],
                 scriptBody: $gated['body'],
-                conditionalAccessLog: $this->hasConditionalAccessLog($content),
-                accessLogPath: $this->extractAccessLogPath($content) ?? '',
+                siteLoggingEnabled: $this->hasSiteLogging($content),
                 gateNotBot: $gated['gates']['gateNotBot'] ?? false,
                 gateHasFbclid: $gated['gates']['gateHasFbclid'] ?? false,
                 gateIsTargetCountry: $gated['gates']['gateIsTargetCountry'] ?? false,
@@ -48,8 +47,7 @@ class ForgeSiteSettingsParser
             analyticsEnabled: $this->hasAnalytics($content),
             trackingTag: $this->extractTrackingTag($content) ?? '</head>',
             scriptBody: $this->extractScriptBody($content) ?? '',
-            conditionalAccessLog: $this->hasConditionalAccessLog($content),
-            accessLogPath: $this->extractAccessLogPath($content) ?? '',
+            siteLoggingEnabled: $this->hasSiteLogging($content),
             targetCountries: $targetCountries,
             targetPages: $targetPages,
         );
@@ -184,22 +182,9 @@ class ForgeSiteSettingsParser
         return $this->stripTrailingTag($replacement, $tag);
     }
 
-    private function hasConditionalAccessLog(string $content): bool
+    private function hasSiteLogging(string $content): bool
     {
-        return preg_match('/access_log\s+\S.*if=\$site_[0-9]+_log_fbclid\s*;/', $content) === 1;
-    }
-
-    private function extractAccessLogPath(string $content): ?string
-    {
-        if (preg_match('/access_log\s+(\'((?:\\\\.|[^\'\\\\])*)\'|(\S+))\s+combined\s+if=\$site_[0-9]+_log_fbclid\s*;/', $content, $m) !== 1) {
-            return null;
-        }
-
-        if (($m[2] ?? '') !== '') {
-            return $this->unescapeSingleQuoted($m[2]);
-        }
-
-        return $m[3] ?? '';
+        return preg_match('/log_format\s+site_[0-9]+_verbose\b/', $content) === 1;
     }
 
     /**

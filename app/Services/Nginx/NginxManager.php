@@ -79,6 +79,13 @@ class NginxManager
         return $this->ssh->readFile($server, $path);
     }
 
+    public function fileExists(Server $server, string $path): bool
+    {
+        $this->assertWithinRoot($path);
+
+        return $this->ssh->fileExists($server, $path);
+    }
+
     public function validate(Server $server): NginxTestResult
     {
         $result = $this->ssh->runPrivileged($server, 'nginx -t 2>&1');
@@ -223,6 +230,118 @@ class NginxManager
             status: 'saved',
             output: $existed ? 'Managed file updated.' : 'Managed file created.',
             backupPath: $backupPath,
+        );
+    }
+
+    /**
+     * Apply a batch of managed-file operations atomically: stage every file, install them all,
+     * run nginx -t ONCE, roll every file back on failure. Use for multi-file schema migrations
+     * where intermediate single-file states would leave nginx referencing undefined variables.
+     *
+     * @param  array<string, ?string>  $files  path => new content, or null to delete
+     */
+    public function applyManagedFilesAtomic(Server $server, array $files): NginxSaveResult
+    {
+        if ($files === []) {
+            return new NginxSaveResult(ok: true, status: 'saved', output: 'Nothing to apply.');
+        }
+
+        foreach (array_keys($files) as $path) {
+            $this->assertManagedPath($path);
+        }
+
+        $ops = [];
+
+        // Phase 1: probe existence + prepare staging/backup paths, sweep legacy junk.
+        foreach ($files as $path => $content) {
+            try {
+                $existed = $this->ssh->fileExists($server, $path);
+            } catch (SshException $e) {
+                return new NginxSaveResult(ok: false, status: 'io_error', output: $e->getMessage());
+            }
+
+            $this->sweepLegacyInPlaceBackups($server, $path);
+
+            $ops[] = [
+                'path' => $path,
+                'content' => $content,
+                'existed' => $existed,
+                'staging' => $content !== null ? '/tmp/redteam-'.Str::random(16).'.tmp' : null,
+                'backup' => $existed ? $this->managedBackupPath($path, Carbon::now()->format('YmdHis').'-'.Str::random(4)) : null,
+                'installed' => false,
+                'removed' => false,
+            ];
+        }
+
+        if ($this->countDelta($ops) === 0) {
+            return new NginxSaveResult(ok: true, status: 'saved', output: 'Managed files already in desired state.');
+        }
+
+        // Phase 2: write every new content to staging. Bail early (and clean stagings) on any failure.
+        foreach ($ops as $op) {
+            if ($op['content'] === null) {
+                continue;
+            }
+
+            try {
+                $this->ssh->writeFile($server, $op['staging'], $op['content']);
+            } catch (SshException $e) {
+                $this->cleanupStagings($server, $ops);
+
+                return new NginxSaveResult(ok: false, status: 'io_error', output: $e->getMessage());
+            }
+        }
+
+        // Phase 3: install (mv) or remove every file, tracking what we did so we can undo it.
+        try {
+            $this->ensureDirectoryExists($server, $this->managedBackupDir());
+        } catch (SshException $e) {
+            $this->cleanupStagings($server, $ops);
+
+            return new NginxSaveResult(ok: false, status: 'io_error', output: $e->getMessage());
+        }
+
+        foreach ($ops as &$op) {
+            try {
+                if ($op['existed']) {
+                    $this->copyFile($server, $op['path'], $op['backup']);
+                }
+
+                if ($op['content'] !== null) {
+                    $this->ensureDirectoryExists($server, dirname($op['path']));
+                    $this->installFile($server, $op['staging'], $op['path']);
+                    $op['installed'] = true;
+                } elseif ($op['existed']) {
+                    $this->removeFileStrict($server, $op['path']);
+                    $op['removed'] = true;
+                }
+            } catch (SshException $e) {
+                $this->rollbackAtomicBatch($server, $ops);
+                $this->cleanupStagings($server, $ops);
+
+                return new NginxSaveResult(ok: false, status: 'io_error', output: $e->getMessage());
+            }
+        }
+        unset($op);
+
+        // Phase 4: ONE nginx -t for the whole batch.
+        $validation = $this->validate($server);
+
+        if (! $validation->ok) {
+            $this->rollbackAtomicBatch($server, $ops);
+            $this->cleanupStagings($server, $ops);
+
+            return new NginxSaveResult(ok: false, status: 'invalid_config', output: $validation->output);
+        }
+
+        foreach ($ops as $op) {
+            $this->pruneManagedBackups($server, $op['path']);
+        }
+
+        return new NginxSaveResult(
+            ok: true,
+            status: 'saved',
+            output: 'Managed files applied ('.count($ops).' file(s)).',
         );
     }
 
@@ -469,6 +588,60 @@ class NginxManager
         }
 
         return new NginxFile($path, 'other', $relative);
+    }
+
+    /**
+     * @param  list<array{path:string,content:?string,existed:bool,staging:?string,backup:?string,installed:bool,removed:bool}>  $ops
+     */
+    private function countDelta(array $ops): int
+    {
+        $delta = 0;
+
+        foreach ($ops as $op) {
+            if ($op['content'] !== null || $op['existed']) {
+                $delta++;
+            }
+        }
+
+        return $delta;
+    }
+
+    /**
+     * @param  list<array{path:string,content:?string,existed:bool,staging:?string,backup:?string,installed:bool,removed:bool}>  $ops
+     */
+    private function cleanupStagings(Server $server, array $ops): void
+    {
+        foreach ($ops as $op) {
+            if ($op['staging'] !== null) {
+                $this->safeRemoveStaging($server, $op['staging']);
+            }
+        }
+    }
+
+    /**
+     * Undo every completed installation/removal in the batch by restoring from the backup
+     * (or deleting what was freshly installed). Best-effort — a backup failure here is a
+     * manual-recovery case and we surface it via the saved backupPath in the caller's result.
+     *
+     * @param  list<array{path:string,content:?string,existed:bool,staging:?string,backup:?string,installed:bool,removed:bool}>  $ops
+     */
+    private function rollbackAtomicBatch(Server $server, array $ops): void
+    {
+        foreach (array_reverse($ops) as $op) {
+            try {
+                if ($op['installed']) {
+                    if ($op['backup'] !== null) {
+                        $this->installFile($server, $op['backup'], $op['path']);
+                    } else {
+                        $this->removeFileStrict($server, $op['path']);
+                    }
+                } elseif ($op['removed'] && $op['backup'] !== null) {
+                    $this->installFile($server, $op['backup'], $op['path']);
+                }
+            } catch (SshException) {
+                // best-effort rollback; config-invalid is still the primary signal to the caller
+            }
+        }
     }
 
     private function rollbackManagedWrite(Server $server, string $path, ?string $backupPath, string $validationOutput): NginxSaveResult
