@@ -9,6 +9,7 @@ use App\Filament\Resources\Servers\Pages\EditServer;
 use App\Filament\Resources\Servers\Pages\ListServers;
 use App\Filament\Resources\Servers\Pages\ManageForgeSites;
 use App\Filament\Resources\Servers\Pages\ManageServerAntibot;
+use App\Filament\Resources\Servers\Pages\ManageServerLogs;
 use App\Filament\Resources\Servers\Pages\ManageServerNginx;
 use App\Filament\Resources\Servers\Schemas\ServerForm;
 use App\Filament\Resources\Servers\Tables\ServersTable;
@@ -56,6 +57,7 @@ class ServerResource extends Resource
             'nginx' => ManageServerNginx::route('/{record}/nginx'),
             'forge-sites' => ManageForgeSites::route('/{record}/forge-sites'),
             'antibot' => ManageServerAntibot::route('/{record}/antibot'),
+            'logs' => ManageServerLogs::route('/{record}/logs'),
         ];
     }
 }

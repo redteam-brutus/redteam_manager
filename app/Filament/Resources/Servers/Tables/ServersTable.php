@@ -8,6 +8,7 @@ use App\Enums\ConnectionStatus;
 use App\Filament\Resources\Servers\Actions\TestConnectionAction;
 use App\Filament\Resources\Servers\Pages\ManageForgeSites;
 use App\Filament\Resources\Servers\Pages\ManageServerAntibot;
+use App\Filament\Resources\Servers\Pages\ManageServerLogs;
 use App\Filament\Resources\Servers\Pages\ManageServerNginx;
 use Filament\Actions\Action;
 use Filament\Actions\BulkActionGroup;
@@ -72,6 +73,11 @@ class ServersTable
                     ->icon(Heroicon::OutlinedShieldCheck)
                     ->color('gray')
                     ->url(fn ($record): string => ManageServerAntibot::getUrl(['record' => $record])),
+                Action::make('logs')
+                    ->label('Logs')
+                    ->icon(Heroicon::OutlinedDocumentText)
+                    ->color('gray')
+                    ->url(fn ($record): string => ManageServerLogs::getUrl(['record' => $record])),
                 EditAction::make(),
                 DeleteAction::make(),
             ])
