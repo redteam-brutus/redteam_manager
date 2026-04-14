@@ -118,9 +118,12 @@ class ManageForgeSites extends Page
             'analyticsEnabled' => $site->settings->analyticsEnabled,
             'trackingTag' => $site->settings->trackingTag,
             'scriptBody' => $site->settings->scriptBody,
-            'restrictToTargetPages' => $site->settings->restrictToTargetPages,
             'conditionalAccessLog' => $site->settings->conditionalAccessLog,
             'accessLogPath' => $site->settings->accessLogPath,
+            'gateNotBot' => $site->settings->gateNotBot,
+            'gateHasFbclid' => $site->settings->gateHasFbclid,
+            'gateIsTargetCountry' => $site->settings->gateIsTargetCountry,
+            'gateIsTargetPage' => $site->settings->gateIsTargetPage,
         ];
 
         $this->refreshPreview();
@@ -155,9 +158,22 @@ class ManageForgeSites extends Page
                             ->rows(6)
                             ->helperText('Inline <script>…</script> HTML. Keep single quotes escaped — renderer escapes them for nginx.')
                             ->live(debounce: 400),
-                        Toggle::make('restrictToTargetPages')
-                            ->label('Only inject on target pages')
-                            ->helperText('Requires the anti-bot conf to be active with at least one target page configured.')
+                    ]),
+                Section::make('Injection gates')
+                    ->description('Gate sub_filter injection on global signals. $is_bot / $is_target_country / $is_target_page require the anti-bot conf.')
+                    ->schema([
+                        Toggle::make('gateNotBot')
+                            ->label('Only real users (not bots)')
+                            ->live(debounce: 400),
+                        Toggle::make('gateHasFbclid')
+                            ->label('Only when ?fbclid is present')
+                            ->helperText('Emits a $has_fbclid helper map inline. No anti-bot dependency.')
+                            ->live(debounce: 400),
+                        Toggle::make('gateIsTargetCountry')
+                            ->label('Only target countries')
+                            ->live(debounce: 400),
+                        Toggle::make('gateIsTargetPage')
+                            ->label('Only target pages')
                             ->live(debounce: 400),
                     ]),
                 Section::make('Conditional access log')
@@ -228,9 +244,12 @@ class ManageForgeSites extends Page
                 'analyticsEnabled' => false,
                 'trackingTag' => '</head>',
                 'scriptBody' => '',
-                'restrictToTargetPages' => false,
                 'conditionalAccessLog' => false,
                 'accessLogPath' => '',
+                'gateNotBot' => false,
+                'gateHasFbclid' => false,
+                'gateIsTargetCountry' => false,
+                'gateIsTargetPage' => false,
             ];
             $this->refreshPreview();
             $this->loadSites();
@@ -311,7 +330,10 @@ class ManageForgeSites extends Page
             scriptBody: (string) ($data['scriptBody'] ?? ''),
             conditionalAccessLog: (bool) ($data['conditionalAccessLog'] ?? false),
             accessLogPath: (string) ($data['accessLogPath'] ?? ''),
-            restrictToTargetPages: (bool) ($data['restrictToTargetPages'] ?? false),
+            gateNotBot: (bool) ($data['gateNotBot'] ?? false),
+            gateHasFbclid: (bool) ($data['gateHasFbclid'] ?? false),
+            gateIsTargetCountry: (bool) ($data['gateIsTargetCountry'] ?? false),
+            gateIsTargetPage: (bool) ($data['gateIsTargetPage'] ?? false),
         );
     }
 

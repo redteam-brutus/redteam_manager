@@ -85,8 +85,14 @@ class ManageServerAntibot extends Page
             return;
         }
 
+        $botPatterns = $settings->botPatterns;
+
+        if (! $this->hasManaged && $botPatterns === []) {
+            $botPatterns = AntibotSettings::DEFAULT_BOT_PATTERNS;
+        }
+
         $this->data = [
-            'botPatterns' => $settings->botPatterns,
+            'botPatterns' => $botPatterns,
             'targetCountries' => $settings->targetCountries,
             'targetPages' => array_map(fn (string $p): array => ['pattern' => $p], $settings->targetPages),
         ];

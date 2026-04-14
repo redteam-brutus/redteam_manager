@@ -109,12 +109,14 @@ it('notifies danger when nginx -t rejects the new managed file', function () {
         ->assertNotified('Save refused — config invalid');
 });
 
-it('hydrates restrictToTargetPages from a gated managed file', function () {
+it('hydrates multi-signal gates from a composite managed file', function () {
     $renderer = new ForgeSiteSettingsRenderer;
     $content = $renderer->render('3075741', new ForgeSiteSettings(
         analyticsEnabled: true,
         scriptBody: '<script>gated</script>',
-        restrictToTargetPages: true,
+        gateNotBot: true,
+        gateHasFbclid: true,
+        gateIsTargetPage: true,
     ));
 
     $this->fake->shouldReturn(0, "/etc/nginx/forge-conf/3075741/site.conf\n");
@@ -124,8 +126,10 @@ it('hydrates restrictToTargetPages from a gated managed file', function () {
 
     Livewire::test(ManageForgeSites::class, ['record' => $server->id])
         ->call('selectSite', '3075741')
-        ->assertSet('data.restrictToTargetPages', true)
-        ->assertSet('data.analyticsEnabled', true)
+        ->assertSet('data.gateNotBot', true)
+        ->assertSet('data.gateHasFbclid', true)
+        ->assertSet('data.gateIsTargetCountry', false)
+        ->assertSet('data.gateIsTargetPage', true)
         ->assertSet('data.scriptBody', '<script>gated</script>');
 });
 

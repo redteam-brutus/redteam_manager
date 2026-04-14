@@ -192,34 +192,66 @@ it('disable is a no-op when no managed file exists', function () {
         ->and($result->output)->toBe('Already disabled.');
 });
 
-it('renderer emits a gated scenario map when restrictToTargetPages is on', function () {
+it('renderer emits ungated analytics when no gates are set', function () {
     $renderer = new ForgeSiteSettingsRenderer;
 
     $content = $renderer->render('3075741', new ForgeSiteSettings(
         analyticsEnabled: true,
         scriptBody: '<script>x</script>',
-        restrictToTargetPages: true,
-    ));
-
-    expect($content)->toContain('map $is_target_page $site_3075741_analytics_script')
-        ->and($content)->toContain('sub_filter \'</head>\' $site_3075741_analytics_script;')
-        ->and($content)->not->toContain("sub_filter '</head>' '<script>");
-});
-
-it('renderer emits ungated analytics when restrictToTargetPages is off', function () {
-    $renderer = new ForgeSiteSettingsRenderer;
-
-    $content = $renderer->render('3075741', new ForgeSiteSettings(
-        analyticsEnabled: true,
-        scriptBody: '<script>x</script>',
-        restrictToTargetPages: false,
     ));
 
     expect($content)->not->toContain('$site_3075741_analytics_script')
         ->and($content)->toContain("sub_filter '</head>' '<script>x</script></head>';");
 });
 
-it('parser round-trips a gated analytics managed file', function () {
+it('renderer emits single-signal map when exactly one gate is on', function () {
+    $renderer = new ForgeSiteSettingsRenderer;
+
+    $content = $renderer->render('3075741', new ForgeSiteSettings(
+        analyticsEnabled: true,
+        scriptBody: '<script>x</script>',
+        gateIsTargetPage: true,
+    ));
+
+    expect($content)->toContain('map $is_target_page $site_3075741_analytics_script')
+        ->and($content)->toContain('sub_filter \'</head>\' $site_3075741_analytics_script;')
+        ->and($content)->not->toContain('$has_fbclid');
+});
+
+it('renderer emits the $has_fbclid helper only when gateHasFbclid is on', function () {
+    $renderer = new ForgeSiteSettingsRenderer;
+
+    $with = $renderer->render('3075741', new ForgeSiteSettings(
+        analyticsEnabled: true,
+        scriptBody: '<script>x</script>',
+        gateHasFbclid: true,
+    ));
+    $without = $renderer->render('3075741', new ForgeSiteSettings(
+        analyticsEnabled: true,
+        scriptBody: '<script>x</script>',
+        gateIsTargetPage: true,
+    ));
+
+    expect($with)->toContain('map $arg_fbclid $has_fbclid')
+        ->and($without)->not->toContain('map $arg_fbclid $has_fbclid');
+});
+
+it('renderer emits composite map with colon-joined signals when multiple gates are on', function () {
+    $renderer = new ForgeSiteSettingsRenderer;
+
+    $content = $renderer->render('3075741', new ForgeSiteSettings(
+        analyticsEnabled: true,
+        scriptBody: '<script>x</script>',
+        gateNotBot: true,
+        gateHasFbclid: true,
+        gateIsTargetPage: true,
+    ));
+
+    expect($content)->toContain('map "$is_bot:$has_fbclid:$is_target_page" $site_3075741_analytics_script')
+        ->and($content)->toContain('"0:1:1"');
+});
+
+it('parser round-trips a single-signal gated managed file', function () {
     $renderer = new ForgeSiteSettingsRenderer;
     $parser = new ForgeSiteSettingsParser;
 
@@ -228,17 +260,41 @@ it('parser round-trips a gated analytics managed file', function () {
         scriptBody: '<script>console.log("hi")</script>',
         conditionalAccessLog: true,
         accessLogPath: '/var/log/nginx/site-fbclid.log',
-        restrictToTargetPages: true,
+        gateIsTargetPage: true,
     );
 
     $parsed = $parser->parse($renderer->render('3075741', $original));
 
     expect($parsed->analyticsEnabled)->toBeTrue()
-        ->and($parsed->restrictToTargetPages)->toBeTrue()
+        ->and($parsed->gateIsTargetPage)->toBeTrue()
+        ->and($parsed->gateNotBot)->toBeFalse()
+        ->and($parsed->gateHasFbclid)->toBeFalse()
+        ->and($parsed->gateIsTargetCountry)->toBeFalse()
         ->and($parsed->trackingTag)->toBe('</head>')
         ->and($parsed->scriptBody)->toBe('<script>console.log("hi")</script>')
         ->and($parsed->conditionalAccessLog)->toBeTrue()
         ->and($parsed->accessLogPath)->toBe('/var/log/nginx/site-fbclid.log');
+});
+
+it('parser round-trips a composite gated managed file', function () {
+    $renderer = new ForgeSiteSettingsRenderer;
+    $parser = new ForgeSiteSettingsParser;
+
+    $original = new ForgeSiteSettings(
+        analyticsEnabled: true,
+        scriptBody: '<script>x</script>',
+        gateNotBot: true,
+        gateHasFbclid: true,
+        gateIsTargetPage: true,
+    );
+
+    $parsed = $parser->parse($renderer->render('3075741', $original));
+
+    expect($parsed->gateNotBot)->toBeTrue()
+        ->and($parsed->gateHasFbclid)->toBeTrue()
+        ->and($parsed->gateIsTargetCountry)->toBeFalse()
+        ->and($parsed->gateIsTargetPage)->toBeTrue()
+        ->and($parsed->scriptBody)->toBe('<script>x</script>');
 });
 
 it('rejects non-numeric site ids', function () {

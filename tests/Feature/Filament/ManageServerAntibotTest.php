@@ -27,13 +27,32 @@ function serverForAntibotPage(): Server
     ]);
 }
 
-it('mounts with empty settings when no managed file exists', function () {
+it('pre-fills the default bot list when no managed file exists', function () {
+    $server = serverForAntibotPage();
+
+    $component = Livewire::test(ManageServerAntibot::class, ['record' => $server->id])
+        ->assertSet('hasManaged', false)
+        ->assertSet('data.targetCountries', []);
+
+    $botPatterns = $component->get('data.botPatterns');
+    expect($botPatterns)
+        ->toBeArray()
+        ->and(count($botPatterns))->toBeGreaterThan(40)
+        ->and($botPatterns[0])->toBe('googlebot')
+        ->and(end($botPatterns))->toBe('archive.org_bot');
+});
+
+it('keeps the parsed bot list intact when a managed file already exists', function () {
+    $content = (new AntibotSettingsRenderer)->render(new AntibotSettings(
+        botPatterns: ['googlebot'],
+    ));
+    $this->fake->withFile('/etc/nginx/conf.d/redteam-antibot.conf', $content);
+
     $server = serverForAntibotPage();
 
     Livewire::test(ManageServerAntibot::class, ['record' => $server->id])
-        ->assertSet('hasManaged', false)
-        ->assertSet('data.botPatterns', [])
-        ->assertSet('data.targetCountries', []);
+        ->assertSet('hasManaged', true)
+        ->assertSet('data.botPatterns', ['googlebot']);
 });
 
 it('mounts with parsed settings when a managed file exists', function () {

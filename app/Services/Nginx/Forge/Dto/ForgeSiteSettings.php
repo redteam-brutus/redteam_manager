@@ -12,8 +12,19 @@ final readonly class ForgeSiteSettings
         public string $scriptBody = '',
         public bool $conditionalAccessLog = false,
         public string $accessLogPath = '',
-        public bool $restrictToTargetPages = false,
+        public bool $gateNotBot = false,
+        public bool $gateHasFbclid = false,
+        public bool $gateIsTargetCountry = false,
+        public bool $gateIsTargetPage = false,
     ) {}
+
+    public function hasAnyGate(): bool
+    {
+        return $this->gateNotBot
+            || $this->gateHasFbclid
+            || $this->gateIsTargetCountry
+            || $this->gateIsTargetPage;
+    }
 
     public function isEmpty(): bool
     {

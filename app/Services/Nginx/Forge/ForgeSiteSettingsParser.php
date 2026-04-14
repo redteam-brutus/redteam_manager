@@ -8,6 +8,18 @@ use App\Services\Nginx\Forge\Dto\ForgeSiteSettings;
 
 class ForgeSiteSettingsParser
 {
+    /**
+     * Signal table inverse of ForgeSiteSettingsRenderer::SIGNAL_TABLE.
+     *
+     * @var array<string, array{field: string, value: string}>
+     */
+    private const SIGNAL_LOOKUP = [
+        'is_bot' => ['field' => 'gateNotBot', 'value' => '0'],
+        'has_fbclid' => ['field' => 'gateHasFbclid', 'value' => '1'],
+        'is_target_country' => ['field' => 'gateIsTargetCountry', 'value' => '1'],
+        'is_target_page' => ['field' => 'gateIsTargetPage', 'value' => '1'],
+    ];
+
     public function parse(string $content): ForgeSiteSettings
     {
         $gated = $this->extractGatedAnalytics($content);
@@ -19,7 +31,10 @@ class ForgeSiteSettingsParser
                 scriptBody: $gated['body'],
                 conditionalAccessLog: $this->hasConditionalAccessLog($content),
                 accessLogPath: $this->extractAccessLogPath($content) ?? '',
-                restrictToTargetPages: true,
+                gateNotBot: $gated['gates']['gateNotBot'] ?? false,
+                gateHasFbclid: $gated['gates']['gateHasFbclid'] ?? false,
+                gateIsTargetCountry: $gated['gates']['gateIsTargetCountry'] ?? false,
+                gateIsTargetPage: $gated['gates']['gateIsTargetPage'] ?? false,
             );
         }
 
@@ -29,29 +44,103 @@ class ForgeSiteSettingsParser
             scriptBody: $this->extractScriptBody($content) ?? '',
             conditionalAccessLog: $this->hasConditionalAccessLog($content),
             accessLogPath: $this->extractAccessLogPath($content) ?? '',
-            restrictToTargetPages: false,
         );
     }
 
     /**
-     * @return array{tag: string, body: string}|null
+     * @return array{tag: string, body: string, gates: array<string, bool>}|null
      */
     private function extractGatedAnalytics(string $content): ?array
     {
-        $pattern = '/map\s+\$is_target_page\s+\$site_[0-9]+_analytics_script\s*\{\s*default\s+\'((?:\\\\.|[^\'\\\\])*)\'\s*;\s*1\s+\'((?:\\\\.|[^\'\\\\])*)\'\s*;\s*\}/';
+        if (($match = $this->matchCompositeGate($content)) !== null) {
+            return $match;
+        }
+
+        return $this->matchSingleSignalGate($content);
+    }
+
+    /**
+     * @return array{tag: string, body: string, gates: array<string, bool>}|null
+     */
+    private function matchCompositeGate(string $content): ?array
+    {
+        $pattern = '/map\s+"((?:\$\w+)(?::\$\w+)+)"\s+\$site_[0-9]+_analytics_script\s*\{\s*default\s+\'((?:\\\\.|[^\'\\\\])*)\'\s*;\s*"([^"]+)"\s+\'((?:\\\\.|[^\'\\\\])*)\'\s*;\s*\}/';
 
         if (preg_match($pattern, $content, $m) !== 1) {
             return null;
         }
 
-        $tag = $this->unescapeSingleQuoted($m[1]);
-        $replacement = $this->unescapeSingleQuoted($m[2]);
+        $varList = array_map(fn (string $v): string => ltrim($v, '$'), explode(':', $m[1]));
+        $valueList = explode(':', $m[3]);
 
-        $body = str_ends_with($replacement, $tag)
+        if (count($varList) !== count($valueList)) {
+            return null;
+        }
+
+        $gates = $this->gatesFromSignals($varList, $valueList);
+        $tag = $this->unescapeSingleQuoted($m[2]);
+        $replacement = $this->unescapeSingleQuoted($m[4]);
+
+        return [
+            'tag' => $tag,
+            'body' => $this->stripTrailingTag($replacement, $tag),
+            'gates' => $gates,
+        ];
+    }
+
+    /**
+     * @return array{tag: string, body: string, gates: array<string, bool>}|null
+     */
+    private function matchSingleSignalGate(string $content): ?array
+    {
+        $pattern = '/map\s+\$(\w+)\s+\$site_[0-9]+_analytics_script\s*\{\s*default\s+\'((?:\\\\.|[^\'\\\\])*)\'\s*;\s*(\S+)\s+\'((?:\\\\.|[^\'\\\\])*)\'\s*;\s*\}/';
+
+        if (preg_match($pattern, $content, $m) !== 1) {
+            return null;
+        }
+
+        $gates = $this->gatesFromSignals([$m[1]], [$m[3]]);
+        $tag = $this->unescapeSingleQuoted($m[2]);
+        $replacement = $this->unescapeSingleQuoted($m[4]);
+
+        return [
+            'tag' => $tag,
+            'body' => $this->stripTrailingTag($replacement, $tag),
+            'gates' => $gates,
+        ];
+    }
+
+    /**
+     * @param  list<string>  $varList
+     * @param  list<string>  $valueList
+     * @return array<string, bool>
+     */
+    private function gatesFromSignals(array $varList, array $valueList): array
+    {
+        $gates = [];
+
+        foreach ($varList as $index => $var) {
+            $lookup = self::SIGNAL_LOOKUP[$var] ?? null;
+
+            if ($lookup === null) {
+                continue;
+            }
+
+            if (($valueList[$index] ?? null) !== $lookup['value']) {
+                continue;
+            }
+
+            $gates[$lookup['field']] = true;
+        }
+
+        return $gates;
+    }
+
+    private function stripTrailingTag(string $replacement, string $tag): string
+    {
+        return str_ends_with($replacement, $tag)
             ? substr($replacement, 0, -strlen($tag))
             : $replacement;
-
-        return ['tag' => $tag, 'body' => $body];
     }
 
     private function hasAnalytics(string $content): bool
@@ -78,11 +167,7 @@ class ForgeSiteSettingsParser
         $tag = $this->unescapeSingleQuoted($m[1]);
         $replacement = $this->unescapeSingleQuoted($m[2]);
 
-        if (str_ends_with($replacement, $tag)) {
-            return substr($replacement, 0, -strlen($tag));
-        }
-
-        return $replacement;
+        return $this->stripTrailingTag($replacement, $tag);
     }
 
     private function hasConditionalAccessLog(string $content): bool
