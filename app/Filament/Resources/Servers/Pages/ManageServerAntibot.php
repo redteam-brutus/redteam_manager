@@ -12,9 +12,11 @@ use App\Services\Nginx\Antibot\Dto\AntibotSettings;
 use App\Services\Nginx\Dto\NginxSaveResult;
 use App\Services\Nginx\NginxManager;
 use App\Services\Ssh\Exceptions\SshException;
+use App\Support\Countries;
 use BackedEnum;
 use Filament\Actions\Action;
 use Filament\Forms\Components\Repeater;
+use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TagsInput;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
@@ -121,10 +123,13 @@ class ManageServerAntibot extends Page
                 Section::make('Target countries')
                     ->description('Cloudflare country codes that count as $is_target_country = 1.')
                     ->schema([
-                        TagsInput::make('targetCountries')
-                            ->placeholder('IL, EG, US')
-                            ->suggestions(['IL', 'EG', 'US', 'GB', 'DE', 'FR', 'AE', 'SA'])
-                            ->helperText('2-letter uppercase codes. Anything else is rejected on save.')
+                        Select::make('targetCountries')
+                            ->label('Target countries')
+                            ->multiple()
+                            ->searchable()
+                            ->native(false)
+                            ->options(Countries::options())
+                            ->helperText('Type to search by name. Stored as ISO-3166-1 alpha-2 codes.')
                             ->live(debounce: 400),
                     ]),
                 Section::make('Target pages')
