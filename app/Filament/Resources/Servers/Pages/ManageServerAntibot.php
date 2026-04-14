@@ -12,13 +12,9 @@ use App\Services\Nginx\Antibot\Dto\AntibotSettings;
 use App\Services\Nginx\Dto\NginxSaveResult;
 use App\Services\Nginx\NginxManager;
 use App\Services\Ssh\Exceptions\SshException;
-use App\Support\Countries;
 use BackedEnum;
 use Filament\Actions\Action;
-use Filament\Forms\Components\Repeater;
-use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TagsInput;
-use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\Concerns\InteractsWithRecord;
 use Filament\Resources\Pages\Page;
@@ -95,8 +91,6 @@ class ManageServerAntibot extends Page
 
         $this->data = [
             'botPatterns' => $botPatterns,
-            'targetCountries' => $settings->targetCountries,
-            'targetPages' => array_map(fn (string $p): array => ['pattern' => $p], $settings->targetPages),
         ];
 
         $this->refreshPreview();
@@ -113,36 +107,11 @@ class ManageServerAntibot extends Page
             ->statePath('data')
             ->components([
                 Section::make('Bot user agents')
-                    ->description('Regex fragments OR\'d together inside map $http_user_agent $is_bot.')
+                    ->description('Regex fragments OR\'d together inside map $http_user_agent $is_bot. Target countries and pages are configured per Forge site.')
                     ->schema([
                         TagsInput::make('botPatterns')
                             ->placeholder('Add a UA fragment, e.g. googlebot')
                             ->helperText('Each tag is inserted verbatim into the alternation. Avoid pipes, unescaped parens, and newlines.')
-                            ->live(debounce: 400),
-                    ]),
-                Section::make('Target countries')
-                    ->description('Cloudflare country codes that count as $is_target_country = 1.')
-                    ->schema([
-                        Select::make('targetCountries')
-                            ->label('Target countries')
-                            ->multiple()
-                            ->searchable()
-                            ->native(false)
-                            ->options(Countries::options())
-                            ->helperText('Type to search by name. Stored as ISO-3166-1 alpha-2 codes.')
-                            ->live(debounce: 400),
-                    ]),
-                Section::make('Target pages')
-                    ->description('URI regex bodies (without the ~* prefix). Each row becomes one row in map $request_uri $is_target_page.')
-                    ->schema([
-                        Repeater::make('targetPages')
-                            ->simple(
-                                TextInput::make('pattern')
-                                    ->required()
-                                    ->placeholder('^/my-page/'),
-                            )
-                            ->addActionLabel('Add a target page')
-                            ->reorderable(false)
                             ->live(debounce: 400),
                     ]),
             ]);
@@ -169,6 +138,7 @@ class ManageServerAntibot extends Page
         if ($result->ok) {
             $this->hasManaged = ! $settings->isEmpty();
             $this->refreshPreview();
+            $this->autoReload();
         }
     }
 
@@ -188,10 +158,9 @@ class ManageServerAntibot extends Page
             $this->hasManaged = false;
             $this->data = [
                 'botPatterns' => [],
-                'targetCountries' => [],
-                'targetPages' => [],
             ];
             $this->refreshPreview();
+            $this->autoReload();
         }
     }
 
@@ -210,6 +179,37 @@ class ManageServerAntibot extends Page
             ->body($result->output !== '' ? $result->output : null);
 
         $result->ok ? $notification->success()->send() : $notification->danger()->send();
+    }
+
+    private function autoReload(): void
+    {
+        try {
+            $result = app(NginxManager::class)->reload($this->getServer());
+        } catch (SshException $e) {
+            Notification::make()
+                ->title('Saved, but auto-reload failed')
+                ->body('Your change is valid on disk but nginx is still running the old config. Click Reload nginx to apply. ('.$e->getMessage().')')
+                ->warning()
+                ->send();
+
+            return;
+        }
+
+        if (! $result->ok) {
+            Notification::make()
+                ->title('Saved, but auto-reload failed')
+                ->body('Your change is valid on disk but nginx is still running the old config. Click Reload nginx to apply. ('.$result->output.')')
+                ->warning()
+                ->send();
+
+            return;
+        }
+
+        Notification::make()
+            ->title('Nginx reloaded')
+            ->body('Managed config is now live.')
+            ->success()
+            ->send();
     }
 
     protected function getHeaderActions(): array
@@ -231,7 +231,7 @@ class ManageServerAntibot extends Page
                 ->visible(fn (): bool => $this->hasManaged)
                 ->requiresConfirmation()
                 ->modalHeading('Disable anti-bot')
-                ->modalDescription('Removes the managed file. Any server{} blocks referencing $is_bot / $is_target_country / $is_target_page will fail validation until removed.')
+                ->modalDescription('Removes the managed file. Any server{} blocks referencing $is_bot will fail validation until their gates are removed.')
                 ->action(fn () => $this->disableAntibot()),
 
             Action::make('reload')
@@ -257,15 +257,8 @@ class ManageServerAntibot extends Page
     {
         $data = $this->data ?? [];
 
-        $pages = array_values(array_filter(
-            array_map(fn ($row): string => is_array($row) ? (string) ($row['pattern'] ?? '') : (string) $row, $data['targetPages'] ?? []),
-            fn (string $p): bool => $p !== '',
-        ));
-
         return new AntibotSettings(
             botPatterns: array_values(array_map('strval', $data['botPatterns'] ?? [])),
-            targetCountries: array_values(array_map('strval', $data['targetCountries'] ?? [])),
-            targetPages: $pages,
         );
     }
 

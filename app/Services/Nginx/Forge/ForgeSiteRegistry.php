@@ -14,7 +14,7 @@ use InvalidArgumentException;
 
 class ForgeSiteRegistry
 {
-    private const MANAGED_FILENAME = 'redteam-analytics.conf';
+    private const SERVER_FILENAME = 'redteam-analytics.conf';
 
     public function __construct(
         private readonly NginxManager $nginx,
@@ -42,7 +42,7 @@ class ForgeSiteRegistry
             $siteId = $m[1];
             $siteIds[$siteId] = true;
 
-            if ($file->path === $this->managedPath($siteId)) {
+            if ($file->path === $this->serverManagedPath($siteId)) {
                 $managedFlags[$siteId] = true;
             }
         }
@@ -55,7 +55,7 @@ class ForgeSiteRegistry
             $sites[] = new ForgeSite(
                 siteId: $siteId,
                 siteConfPath: $this->nginxRoot."/forge-conf/{$siteId}/site.conf",
-                managedPath: $this->managedPath($siteId),
+                managedPath: $this->serverManagedPath($siteId),
                 hasManaged: $managedFlags[$siteId] ?? false,
                 settings: new ForgeSiteSettings,
                 domains: $domainMap[$siteId] ?? [],
@@ -71,7 +71,23 @@ class ForgeSiteRegistry
     {
         $this->assertSiteId($siteId);
 
-        return $this->buildSite($server, $siteId, loadContent: true);
+        $serverContent = $this->safeReadFile($server, $this->serverManagedPath($siteId));
+        $httpContent = $this->safeReadFile($server, $this->httpManagedPath($siteId));
+
+        $hasManaged = $serverContent !== null;
+        $combined = ($httpContent ?? '')."\n".($serverContent ?? '');
+
+        $settings = $hasManaged
+            ? $this->parser->parse($combined)
+            : new ForgeSiteSettings;
+
+        return new ForgeSite(
+            siteId: $siteId,
+            siteConfPath: $this->nginxRoot."/forge-conf/{$siteId}/site.conf",
+            managedPath: $this->serverManagedPath($siteId),
+            hasManaged: $hasManaged,
+            settings: $settings,
+        );
     }
 
     public function save(Server $server, string $siteId, ForgeSiteSettings $settings): NginxSaveResult
@@ -82,45 +98,61 @@ class ForgeSiteRegistry
             return $this->disable($server, $siteId);
         }
 
-        $content = $this->renderer->render($siteId, $settings);
+        $rendered = $this->renderer->render($siteId, $settings);
+        $httpPath = $this->httpManagedPath($siteId);
+        $serverPath = $this->serverManagedPath($siteId);
 
-        return $this->nginx->writeManagedFile($server, $this->managedPath($siteId), $content);
+        $httpResult = $rendered->httpContext !== ''
+            ? $this->nginx->writeManagedFile($server, $httpPath, $rendered->httpContext)
+            : $this->nginx->deleteManagedFile($server, $httpPath);
+
+        if (! $httpResult->ok) {
+            return $httpResult;
+        }
+
+        if ($rendered->serverContext === '') {
+            return $this->nginx->deleteManagedFile($server, $serverPath);
+        }
+
+        $serverResult = $this->nginx->writeManagedFile($server, $serverPath, $rendered->serverContext);
+
+        if (! $serverResult->ok && $rendered->httpContext !== '') {
+            $this->nginx->deleteManagedFile($server, $httpPath);
+        }
+
+        return $serverResult;
     }
 
     public function disable(Server $server, string $siteId): NginxSaveResult
     {
         $this->assertSiteId($siteId);
 
-        return $this->nginx->deleteManagedFile($server, $this->managedPath($siteId));
-    }
+        $serverResult = $this->nginx->deleteManagedFile($server, $this->serverManagedPath($siteId));
 
-    private function buildSite(Server $server, string $siteId, bool $loadContent): ForgeSite
-    {
-        $managedPath = $this->managedPath($siteId);
-        $content = null;
-
-        try {
-            $content = $this->nginx->readFile($server, $managedPath);
-        } catch (SshException) {
-            $content = null;
+        if (! $serverResult->ok) {
+            return $serverResult;
         }
 
-        $settings = $loadContent && $content !== null
-            ? $this->parser->parse($content)
-            : new ForgeSiteSettings;
-
-        return new ForgeSite(
-            siteId: $siteId,
-            siteConfPath: $this->nginxRoot."/forge-conf/{$siteId}/site.conf",
-            managedPath: $managedPath,
-            hasManaged: $content !== null,
-            settings: $settings,
-        );
+        return $this->nginx->deleteManagedFile($server, $this->httpManagedPath($siteId));
     }
 
-    private function managedPath(string $siteId): string
+    private function safeReadFile(Server $server, string $path): ?string
     {
-        return $this->nginxRoot."/forge-conf/{$siteId}/server/".self::MANAGED_FILENAME;
+        try {
+            return $this->nginx->readFile($server, $path);
+        } catch (SshException) {
+            return null;
+        }
+    }
+
+    private function serverManagedPath(string $siteId): string
+    {
+        return $this->nginxRoot."/forge-conf/{$siteId}/server/".self::SERVER_FILENAME;
+    }
+
+    private function httpManagedPath(string $siteId): string
+    {
+        return $this->nginxRoot."/conf.d/redteam-forge-{$siteId}.conf";
     }
 
     private function assertSiteId(string $siteId): void

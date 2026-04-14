@@ -183,9 +183,11 @@ class NginxManager
             return new NginxSaveResult(ok: false, status: 'io_error', output: $e->getMessage());
         }
 
+        $this->sweepLegacyInPlaceBackups($server, $path);
+
         $timestamp = Carbon::now()->format('YmdHis');
         $stagingPath = '/tmp/redteam-'.Str::random(16).'.tmp';
-        $backupPath = $existed ? $path.'.bak.'.$timestamp : null;
+        $backupPath = $existed ? $this->managedBackupPath($path, $timestamp) : null;
 
         try {
             $this->ssh->writeFile($server, $stagingPath, $content);
@@ -195,6 +197,7 @@ class NginxManager
 
         try {
             if ($existed) {
+                $this->ensureDirectoryExists($server, $this->managedBackupDir());
                 $this->copyFile($server, $path, $backupPath);
             } else {
                 $this->ensureDirectoryExists($server, dirname($path));
@@ -213,7 +216,7 @@ class NginxManager
             return $this->rollbackManagedWrite($server, $path, $backupPath, $validation->output);
         }
 
-        $this->pruneBackups($server, $path);
+        $this->pruneManagedBackups($server, $path);
 
         return new NginxSaveResult(
             ok: true,
@@ -229,15 +232,20 @@ class NginxManager
 
         try {
             if (! $this->ssh->fileExists($server, $path)) {
+                $this->sweepLegacyInPlaceBackups($server, $path);
+
                 return new NginxSaveResult(ok: true, status: 'saved', output: 'Already disabled.');
             }
         } catch (SshException $e) {
             return new NginxSaveResult(ok: false, status: 'io_error', output: $e->getMessage());
         }
 
-        $backupPath = $path.'.bak.'.Carbon::now()->format('YmdHis');
+        $this->sweepLegacyInPlaceBackups($server, $path);
+
+        $backupPath = $this->managedBackupPath($path, Carbon::now()->format('YmdHis'));
 
         try {
+            $this->ensureDirectoryExists($server, $this->managedBackupDir());
             $this->copyFile($server, $path, $backupPath);
             $this->removeFileStrict($server, $path);
         } catch (SshException $e) {
@@ -261,7 +269,7 @@ class NginxManager
             return new NginxSaveResult(ok: false, status: 'invalid_config', output: $validation->output);
         }
 
-        $this->pruneBackups($server, $path);
+        $this->pruneManagedBackups($server, $path);
 
         return new NginxSaveResult(
             ok: true,
@@ -303,6 +311,73 @@ class NginxManager
 
         foreach (array_slice($backups, $keep) as $oldBackup) {
             $this->safeRemove($server, $oldBackup);
+        }
+    }
+
+    private function pruneManagedBackups(Server $server, string $path, int $keep = 10): void
+    {
+        try {
+            $backups = $this->ssh->listFiles($server, $this->managedBackupGlob($path));
+        } catch (SshException) {
+            return;
+        }
+
+        if (count($backups) <= $keep) {
+            return;
+        }
+
+        rsort($backups);
+
+        foreach (array_slice($backups, $keep) as $oldBackup) {
+            $this->safeRemove($server, $oldBackup);
+        }
+    }
+
+    private function managedBackupDir(): string
+    {
+        return $this->nginxRoot.'/redteam-backups';
+    }
+
+    private function managedBackupPath(string $originalPath, string $timestamp): string
+    {
+        return $this->managedBackupDir().'/'.$this->flattenManagedPath($originalPath).'.bak.'.$timestamp;
+    }
+
+    private function managedBackupGlob(string $originalPath): string
+    {
+        return $this->managedBackupDir().'/'.$this->flattenManagedPath($originalPath).'.bak.*';
+    }
+
+    private function flattenManagedPath(string $originalPath): string
+    {
+        $relative = ltrim(str_replace($this->nginxRoot, '', $originalPath), '/');
+
+        return str_replace('/', '__', $relative);
+    }
+
+    /**
+     * Sweep any legacy in-place .bak.* files that older builds dropped next to
+     * the managed file. Forge's `include forge-conf/<id>/server/*;` picks them
+     * up as live config (triggering duplicate directive errors on nginx -t),
+     * so we clear them as a best-effort before writing.
+     */
+    private function sweepLegacyInPlaceBackups(Server $server, string $path): void
+    {
+        $dir = dirname($path);
+        $basename = basename($path);
+
+        $cmd = sprintf(
+            'find %s -maxdepth 1 -type f -name %s -delete 2>/dev/null',
+            escapeshellarg($dir),
+            escapeshellarg($basename.'.bak.*'),
+        );
+
+        try {
+            $server->use_sudo
+                ? $this->ssh->runPrivileged($server, $cmd)
+                : $this->ssh->run($server, $cmd);
+        } catch (SshException) {
+            // best-effort — a leftover backup is only a config issue, not a fatal one
         }
     }
 

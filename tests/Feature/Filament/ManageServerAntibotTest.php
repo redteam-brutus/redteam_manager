@@ -31,8 +31,7 @@ it('pre-fills the default bot list when no managed file exists', function () {
     $server = serverForAntibotPage();
 
     $component = Livewire::test(ManageServerAntibot::class, ['record' => $server->id])
-        ->assertSet('hasManaged', false)
-        ->assertSet('data.targetCountries', []);
+        ->assertSet('hasManaged', false);
 
     $botPatterns = $component->get('data.botPatterns');
     expect($botPatterns)
@@ -55,30 +54,13 @@ it('keeps the parsed bot list intact when a managed file already exists', functi
         ->assertSet('data.botPatterns', ['googlebot']);
 });
 
-it('mounts with parsed settings when a managed file exists', function () {
-    $content = (new AntibotSettingsRenderer)->render(new AntibotSettings(
-        botPatterns: ['googlebot'],
-        targetCountries: ['IL'],
-        targetPages: ['^/page-1/'],
-    ));
-    $this->fake->withFile('/etc/nginx/conf.d/redteam-antibot.conf', $content);
-
-    $server = serverForAntibotPage();
-
-    Livewire::test(ManageServerAntibot::class, ['record' => $server->id])
-        ->assertSet('hasManaged', true)
-        ->assertSet('data.botPatterns', ['googlebot'])
-        ->assertSet('data.targetCountries', ['IL']);
-});
-
 it('saves settings and notifies success', function () {
     $this->fake->shouldReturnForCommand('nginx -t', 0, "ok\n");
 
     $server = serverForAntibotPage();
 
     Livewire::test(ManageServerAntibot::class, ['record' => $server->id])
-        ->set('data.botPatterns', ['googlebot'])
-        ->set('data.targetCountries', ['IL'])
+        ->set('data.botPatterns', ['googlebot', 'bingbot'])
         ->call('saveSettings')
         ->assertNotified('Saved')
         ->assertSet('hasManaged', true);
@@ -87,7 +69,7 @@ it('saves settings and notifies success', function () {
         ->not->toBeNull();
 });
 
-it('disables the managed file when all lists are cleared', function () {
+it('disables the managed file when the bot list is cleared', function () {
     $this->fake->withFile('/etc/nginx/conf.d/redteam-antibot.conf', "# managed\n");
     $this->fake->shouldReturnForCommand('nginx -t', 0, "ok\n");
 
@@ -95,8 +77,6 @@ it('disables the managed file when all lists are cleared', function () {
 
     Livewire::test(ManageServerAntibot::class, ['record' => $server->id])
         ->set('data.botPatterns', [])
-        ->set('data.targetCountries', [])
-        ->set('data.targetPages', [])
         ->call('saveSettings')
         ->assertNotified('Saved')
         ->assertSet('hasManaged', false);

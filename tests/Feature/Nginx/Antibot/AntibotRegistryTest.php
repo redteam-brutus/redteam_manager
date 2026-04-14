@@ -38,40 +38,24 @@ it('renderer round-trips through the parser', function () {
 
     $settings = new AntibotSettings(
         botPatterns: ['googlebot', 'bingbot', 'yandex'],
-        targetCountries: ['IL', 'EG'],
-        targetPages: ['^/page-1/', '^/another-page/'],
     );
 
     $parsed = $parser->parse($renderer->render($settings));
 
-    expect($parsed->botPatterns)->toBe($settings->botPatterns)
-        ->and($parsed->targetCountries)->toBe($settings->targetCountries)
-        ->and($parsed->targetPages)->toBe($settings->targetPages);
+    expect($parsed->botPatterns)->toBe($settings->botPatterns);
 });
 
-it('parser tolerates a file with only one map block', function () {
-    $parser = new AntibotSettingsParser;
-    $content = <<<'EOT'
-map $http_user_agent $is_bot {
-    default 0;
-    ~*(googlebot) 1;
-}
-EOT;
+it('parser returns empty bot patterns for a file with no $is_bot map', function () {
+    $settings = (new AntibotSettingsParser)->parse("# nothing here\n");
 
-    $settings = $parser->parse($content);
-
-    expect($settings->botPatterns)->toBe(['googlebot'])
-        ->and($settings->targetCountries)->toBe([])
-        ->and($settings->targetPages)->toBe([]);
+    expect($settings->botPatterns)->toBe([]);
 });
 
 it('save writes the managed file via sudo mv', function () {
     $this->fake->shouldReturnForCommand('nginx -t', 0, "ok\n");
 
     $settings = new AntibotSettings(
-        botPatterns: ['googlebot'],
-        targetCountries: ['IL'],
-        targetPages: ['^/page-1/'],
+        botPatterns: ['googlebot', 'bingbot'],
     );
 
     $result = $this->registry->save(anAntibotServer(), $settings);
@@ -81,9 +65,9 @@ it('save writes the managed file via sudo mv', function () {
 
     $managed = $this->fake->files['/etc/nginx/conf.d/redteam-antibot.conf'] ?? null;
     expect($managed)->not->toBeNull()
-        ->and($managed)->toContain('~*(googlebot) 1;')
-        ->and($managed)->toContain('"IL" 1;')
-        ->and($managed)->toContain('"~*^/page-1/" 1;');
+        ->and($managed)->toContain('~*(googlebot|bingbot) 1;')
+        ->and($managed)->not->toContain('is_target_country')
+        ->and($managed)->not->toContain('is_target_page');
 });
 
 it('save removes a brand-new file when nginx -t fails', function () {
@@ -130,14 +114,6 @@ it('disable is a no-op when no managed file exists', function () {
         ->and($result->output)->toBe('Already disabled.');
 });
 
-it('renderer rejects an invalid country code', function () {
-    (new AntibotSettingsRenderer)->render(new AntibotSettings(targetCountries: ['israel']));
-})->throws(InvalidArgumentException::class, 'Country code');
-
 it('renderer rejects a bot pattern containing a pipe', function () {
     (new AntibotSettingsRenderer)->render(new AntibotSettings(botPatterns: ['good|bad']));
 })->throws(InvalidArgumentException::class, 'Bot pattern contains forbidden chars');
-
-it('renderer rejects a target page containing a newline', function () {
-    (new AntibotSettingsRenderer)->render(new AntibotSettings(targetPages: ["^/a/\n"]));
-})->throws(InvalidArgumentException::class, 'Target page body');

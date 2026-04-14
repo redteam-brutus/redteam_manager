@@ -12,8 +12,10 @@ use App\Services\Nginx\Forge\ForgeSiteRegistry;
 use App\Services\Nginx\Forge\ForgeSiteSettingsRenderer;
 use App\Services\Nginx\NginxManager;
 use App\Services\Ssh\Exceptions\SshException;
+use App\Support\Countries;
 use BackedEnum;
 use Filament\Actions\Action;
+use Filament\Forms\Components\Repeater;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
@@ -124,6 +126,8 @@ class ManageForgeSites extends Page
             'gateHasFbclid' => $site->settings->gateHasFbclid,
             'gateIsTargetCountry' => $site->settings->gateIsTargetCountry,
             'gateIsTargetPage' => $site->settings->gateIsTargetPage,
+            'targetCountries' => $site->settings->targetCountries,
+            'targetPages' => array_map(fn (string $p): array => ['pattern' => $p], $site->settings->targetPages),
         ];
 
         $this->refreshPreview();
@@ -156,24 +160,49 @@ class ManageForgeSites extends Page
                             ->live(debounce: 400),
                         Textarea::make('scriptBody')
                             ->rows(6)
-                            ->helperText('Inline <script>…</script> HTML. Keep single quotes escaped — renderer escapes them for nginx.')
+                            ->placeholder("<script>console.log('hello');</script>")
+                            ->helperText('Auto-wrapped in <script>…</script> if you don\'t include any <script> tag. Paste your own wrapper to keep attributes like src/async/defer.')
                             ->live(debounce: 400),
                     ]),
                 Section::make('Injection gates')
-                    ->description('Gate sub_filter injection on global signals. $is_bot / $is_target_country / $is_target_page require the anti-bot conf.')
+                    ->description('Gate sub_filter injection on request signals. Bot detection is shared via anti-bot; fbclid, country and page lists are per-site.')
                     ->schema([
                         Toggle::make('gateNotBot')
                             ->label('Only real users (not bots)')
+                            ->helperText('Requires anti-bot conf (provides $is_bot).')
                             ->live(debounce: 400),
                         Toggle::make('gateHasFbclid')
                             ->label('Only when ?fbclid is present')
-                            ->helperText('Emits a $has_fbclid helper map inline. No anti-bot dependency.')
+                            ->helperText('Emits a site-scoped $has_fbclid helper.')
                             ->live(debounce: 400),
                         Toggle::make('gateIsTargetCountry')
                             ->label('Only target countries')
                             ->live(debounce: 400),
                         Toggle::make('gateIsTargetPage')
                             ->label('Only target pages')
+                            ->live(debounce: 400),
+                    ]),
+                Section::make('Target scope (per-site)')
+                    ->description('Countries and page URIs that define $site_<id>_is_target_country and $site_<id>_is_target_page. Each site has its own list — no cross-site bleed.')
+                    ->schema([
+                        Select::make('targetCountries')
+                            ->label('Target countries')
+                            ->multiple()
+                            ->searchable()
+                            ->native(false)
+                            ->options(Countries::options())
+                            ->helperText('Cloudflare country codes. Active when the "Only target countries" gate is on.')
+                            ->live(debounce: 400),
+                        Repeater::make('targetPages')
+                            ->label('Target page URI regexes')
+                            ->simple(
+                                TextInput::make('pattern')
+                                    ->required()
+                                    ->placeholder('^/offer/'),
+                            )
+                            ->addActionLabel('Add a target page')
+                            ->reorderable(false)
+                            ->default([])
                             ->live(debounce: 400),
                     ]),
                 Section::make('Conditional access log')
@@ -219,6 +248,7 @@ class ManageForgeSites extends Page
         if ($result->ok) {
             $this->hasManaged = ! $settings->isEmpty();
             $this->loadSites();
+            $this->autoReload();
         }
     }
 
@@ -250,9 +280,12 @@ class ManageForgeSites extends Page
                 'gateHasFbclid' => false,
                 'gateIsTargetCountry' => false,
                 'gateIsTargetPage' => false,
+                'targetCountries' => [],
+                'targetPages' => [],
             ];
             $this->refreshPreview();
             $this->loadSites();
+            $this->autoReload();
         }
     }
 
@@ -271,6 +304,37 @@ class ManageForgeSites extends Page
             ->body($result->output !== '' ? $result->output : null);
 
         $result->ok ? $notification->success()->send() : $notification->danger()->send();
+    }
+
+    private function autoReload(): void
+    {
+        try {
+            $result = app(NginxManager::class)->reload($this->getServer());
+        } catch (SshException $e) {
+            Notification::make()
+                ->title('Saved, but auto-reload failed')
+                ->body('Your change is valid on disk but nginx is still running the old config. Click Reload nginx to apply. ('.$e->getMessage().')')
+                ->warning()
+                ->send();
+
+            return;
+        }
+
+        if (! $result->ok) {
+            Notification::make()
+                ->title('Saved, but auto-reload failed')
+                ->body('Your change is valid on disk but nginx is still running the old config. Click Reload nginx to apply. ('.$result->output.')')
+                ->warning()
+                ->send();
+
+            return;
+        }
+
+        Notification::make()
+            ->title('Nginx reloaded')
+            ->body('Managed config is now live.')
+            ->success()
+            ->send();
     }
 
     protected function getHeaderActions(): array
@@ -314,15 +378,38 @@ class ManageForgeSites extends Page
             return;
         }
 
-        $this->renderedPreview = app(ForgeSiteSettingsRenderer::class)->render(
+        $rendered = app(ForgeSiteSettingsRenderer::class)->render(
             $this->selectedSiteId,
             $this->settingsFromData(),
         );
+
+        $httpPath = "/etc/nginx/conf.d/redteam-forge-{$this->selectedSiteId}.conf";
+        $serverPath = "/etc/nginx/forge-conf/{$this->selectedSiteId}/server/redteam-analytics.conf";
+
+        $sections = [];
+
+        if ($rendered->httpContext !== '') {
+            $sections[] = "# → {$httpPath}\n\n".$rendered->httpContext;
+        }
+
+        if ($rendered->serverContext !== '') {
+            $sections[] = "# → {$serverPath}\n\n".$rendered->serverContext;
+        }
+
+        $this->renderedPreview = $sections === [] ? null : implode("\n\n", $sections);
     }
 
     private function settingsFromData(): ForgeSiteSettings
     {
         $data = $this->data ?? [];
+
+        $pages = array_values(array_filter(
+            array_map(
+                fn ($row): string => is_array($row) ? (string) ($row['pattern'] ?? '') : (string) $row,
+                (array) ($data['targetPages'] ?? []),
+            ),
+            fn (string $p): bool => $p !== '',
+        ));
 
         return new ForgeSiteSettings(
             analyticsEnabled: (bool) ($data['analyticsEnabled'] ?? false),
@@ -334,6 +421,8 @@ class ManageForgeSites extends Page
             gateHasFbclid: (bool) ($data['gateHasFbclid'] ?? false),
             gateIsTargetCountry: (bool) ($data['gateIsTargetCountry'] ?? false),
             gateIsTargetPage: (bool) ($data['gateIsTargetPage'] ?? false),
+            targetCountries: array_values(array_map('strval', (array) ($data['targetCountries'] ?? []))),
+            targetPages: $pages,
         );
     }
 

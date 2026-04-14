@@ -33,6 +33,21 @@ function seedListing(FakeSshClient $fake, array $paths): void
     $fake->shouldReturn(0, implode("\n", $paths)."\n");
 }
 
+function seedRenderedSite(FakeSshClient $fake, string $siteId, ForgeSiteSettings $settings): string
+{
+    $rendered = (new ForgeSiteSettingsRenderer)->render($siteId, $settings);
+
+    if ($rendered->httpContext !== '') {
+        $fake->withFile("/etc/nginx/conf.d/redteam-forge-{$siteId}.conf", $rendered->httpContext);
+    }
+
+    if ($rendered->serverContext !== '') {
+        $fake->withFile("/etc/nginx/forge-conf/{$siteId}/server/redteam-analytics.conf", $rendered->serverContext);
+    }
+
+    return $rendered->serverContext;
+}
+
 it('lists forge sites discovered via nginx listing', function () {
     seedListing($this->fake, [
         '/etc/nginx/nginx.conf',
@@ -89,16 +104,13 @@ it('find returns defaults when no managed file exists', function () {
 });
 
 it('find parses an existing managed file', function () {
-    $renderer = new ForgeSiteSettingsRenderer;
-    $content = $renderer->render('3075741', new ForgeSiteSettings(
+    seedRenderedSite($this->fake, '3075741', new ForgeSiteSettings(
         analyticsEnabled: true,
         trackingTag: '</head>',
         scriptBody: '<script>console.log("hi")</script>',
         conditionalAccessLog: true,
         accessLogPath: '/var/log/nginx/site-fbclid.log',
     ));
-
-    $this->fake->withFile('/etc/nginx/forge-conf/3075741/server/redteam-analytics.conf', $content);
 
     $site = $this->registry->find(aForgeServer(), '3075741');
 
@@ -167,16 +179,10 @@ it('save removes the brand-new file on nginx -t failure', function () {
 });
 
 it('save restores the previous managed file on nginx -t failure', function () {
-    $renderer = new ForgeSiteSettingsRenderer;
-    $originalContent = $renderer->render('3075741', new ForgeSiteSettings(
+    $originalServer = seedRenderedSite($this->fake, '3075741', new ForgeSiteSettings(
         analyticsEnabled: true,
         scriptBody: '<script>old</script>',
     ));
-
-    $this->fake->withFile(
-        '/etc/nginx/forge-conf/3075741/server/redteam-analytics.conf',
-        $originalContent,
-    );
 
     $this->fake->shouldReturnForCommand('nginx -t', 1, "nginx: [emerg] bogus\n");
 
@@ -186,7 +192,7 @@ it('save restores the previous managed file on nginx -t failure', function () {
     ));
 
     expect($this->fake->files['/etc/nginx/forge-conf/3075741/server/redteam-analytics.conf'])
-        ->toBe($originalContent);
+        ->toBe($originalServer);
 });
 
 it('save with all toggles off routes to disable', function () {
@@ -209,54 +215,49 @@ it('disable is a no-op when no managed file exists', function () {
         ->and($result->output)->toBe('Already disabled.');
 });
 
-it('renderer emits ungated analytics when no gates are set', function () {
-    $renderer = new ForgeSiteSettingsRenderer;
-
-    $content = $renderer->render('3075741', new ForgeSiteSettings(
+it('renderer emits ungated analytics only in the server context when no gates are set', function () {
+    $rendered = (new ForgeSiteSettingsRenderer)->render('3075741', new ForgeSiteSettings(
         analyticsEnabled: true,
         scriptBody: '<script>x</script>',
     ));
 
-    expect($content)->not->toContain('$site_3075741_analytics_script')
-        ->and($content)->toContain("sub_filter '</head>' '<script>x</script></head>';");
+    expect($rendered->httpContext)->toBe('')
+        ->and($rendered->serverContext)->toContain("sub_filter '</head>' '<script>x</script></head>';")
+        ->and($rendered->serverContext)->not->toContain('$site_3075741_analytics_script');
 });
 
-it('renderer emits single-signal map when exactly one gate is on', function () {
-    $renderer = new ForgeSiteSettingsRenderer;
-
-    $content = $renderer->render('3075741', new ForgeSiteSettings(
+it('renderer emits single-signal map in http and sub_filter in server when exactly one gate is on', function () {
+    $rendered = (new ForgeSiteSettingsRenderer)->render('3075741', new ForgeSiteSettings(
         analyticsEnabled: true,
         scriptBody: '<script>x</script>',
         gateIsTargetPage: true,
     ));
 
-    expect($content)->toContain('map $is_target_page $site_3075741_analytics_script')
-        ->and($content)->toContain('sub_filter \'</head>\' $site_3075741_analytics_script;')
-        ->and($content)->not->toContain('$has_fbclid');
+    expect($rendered->httpContext)->toContain('map $site_3075741_is_target_page $site_3075741_analytics_script')
+        ->and($rendered->httpContext)->not->toContain('sub_filter')
+        ->and($rendered->serverContext)->toContain('sub_filter \'</head>\' $site_3075741_analytics_script;')
+        ->and($rendered->serverContext)->not->toContain('map ')
+        ->and($rendered->httpContext)->not->toContain('has_fbclid');
 });
 
-it('renderer emits the $has_fbclid helper only when gateHasFbclid is on', function () {
-    $renderer = new ForgeSiteSettingsRenderer;
-
-    $with = $renderer->render('3075741', new ForgeSiteSettings(
+it('renderer emits a site-scoped $has_fbclid helper only when gateHasFbclid is on', function () {
+    $with = (new ForgeSiteSettingsRenderer)->render('3075741', new ForgeSiteSettings(
         analyticsEnabled: true,
         scriptBody: '<script>x</script>',
         gateHasFbclid: true,
     ));
-    $without = $renderer->render('3075741', new ForgeSiteSettings(
+    $without = (new ForgeSiteSettingsRenderer)->render('3075741', new ForgeSiteSettings(
         analyticsEnabled: true,
         scriptBody: '<script>x</script>',
         gateIsTargetPage: true,
     ));
 
-    expect($with)->toContain('map $arg_fbclid $has_fbclid')
-        ->and($without)->not->toContain('map $arg_fbclid $has_fbclid');
+    expect($with->httpContext)->toContain('map $arg_fbclid $site_3075741_has_fbclid')
+        ->and($without->httpContext)->not->toContain('has_fbclid');
 });
 
 it('renderer emits composite map with colon-joined signals when multiple gates are on', function () {
-    $renderer = new ForgeSiteSettingsRenderer;
-
-    $content = $renderer->render('3075741', new ForgeSiteSettings(
+    $rendered = (new ForgeSiteSettingsRenderer)->render('3075741', new ForgeSiteSettings(
         analyticsEnabled: true,
         scriptBody: '<script>x</script>',
         gateNotBot: true,
@@ -264,8 +265,24 @@ it('renderer emits composite map with colon-joined signals when multiple gates a
         gateIsTargetPage: true,
     ));
 
-    expect($content)->toContain('map "$is_bot:$has_fbclid:$is_target_page" $site_3075741_analytics_script')
-        ->and($content)->toContain('"0:1:1"');
+    expect($rendered->httpContext)->toContain('map "$is_bot:$site_3075741_has_fbclid:$site_3075741_is_target_page" $site_3075741_analytics_script')
+        ->and($rendered->httpContext)->toContain('"0:1:1"');
+});
+
+it('renderer puts map directives only in http context and directives only in server context', function () {
+    $rendered = (new ForgeSiteSettingsRenderer)->render('3075741', new ForgeSiteSettings(
+        analyticsEnabled: true,
+        scriptBody: '<script>x</script>',
+        conditionalAccessLog: true,
+        accessLogPath: '/var/log/nginx/site-fbclid.log',
+        gateNotBot: true,
+        gateHasFbclid: true,
+    ));
+
+    expect($rendered->httpContext)->toContain('map ')
+        ->and($rendered->serverContext)->not->toContain('map ')
+        ->and($rendered->serverContext)->toContain('access_log ')
+        ->and($rendered->serverContext)->toContain('sub_filter');
 });
 
 it('parser round-trips a single-signal gated managed file', function () {
@@ -280,7 +297,7 @@ it('parser round-trips a single-signal gated managed file', function () {
         gateIsTargetPage: true,
     );
 
-    $parsed = $parser->parse($renderer->render('3075741', $original));
+    $parsed = $parser->parse($renderer->render('3075741', $original)->combined());
 
     expect($parsed->analyticsEnabled)->toBeTrue()
         ->and($parsed->gateIsTargetPage)->toBeTrue()
@@ -305,13 +322,115 @@ it('parser round-trips a composite gated managed file', function () {
         gateIsTargetPage: true,
     );
 
-    $parsed = $parser->parse($renderer->render('3075741', $original));
+    $parsed = $parser->parse($renderer->render('3075741', $original)->combined());
 
     expect($parsed->gateNotBot)->toBeTrue()
         ->and($parsed->gateHasFbclid)->toBeTrue()
         ->and($parsed->gateIsTargetCountry)->toBeFalse()
         ->and($parsed->gateIsTargetPage)->toBeTrue()
         ->and($parsed->scriptBody)->toBe('<script>x</script>');
+});
+
+it('save writes the http-context map file to conf.d when gates are on', function () {
+    $this->fake->shouldReturnForCommand('nginx -t', 0, "ok\n");
+
+    $this->registry->save(aForgeServer(), '3075741', new ForgeSiteSettings(
+        analyticsEnabled: true,
+        scriptBody: '<script>x</script>',
+        gateHasFbclid: true,
+    ));
+
+    $httpFile = $this->fake->files['/etc/nginx/conf.d/redteam-forge-3075741.conf'] ?? null;
+    $serverFile = $this->fake->files['/etc/nginx/forge-conf/3075741/server/redteam-analytics.conf'] ?? null;
+
+    expect($httpFile)->not->toBeNull()
+        ->and($httpFile)->toContain('map $arg_fbclid $site_3075741_has_fbclid')
+        ->and($httpFile)->toContain('map $site_3075741_has_fbclid $site_3075741_analytics_script')
+        ->and($serverFile)->not->toBeNull()
+        ->and($serverFile)->toContain('sub_filter \'</head>\' $site_3075741_analytics_script;')
+        ->and($serverFile)->not->toContain('map ');
+});
+
+it('disable removes both http and server managed files', function () {
+    $this->fake->withFile('/etc/nginx/conf.d/redteam-forge-3075741.conf', "# managed\n");
+    $this->fake->withFile('/etc/nginx/forge-conf/3075741/server/redteam-analytics.conf', "# managed\n");
+    $this->fake->shouldReturnForCommand('nginx -t', 0, "ok\n");
+
+    $result = $this->registry->disable(aForgeServer(), '3075741');
+
+    expect($result->ok)->toBeTrue()
+        ->and(array_key_exists('/etc/nginx/conf.d/redteam-forge-3075741.conf', $this->fake->files))->toBeFalse()
+        ->and(array_key_exists('/etc/nginx/forge-conf/3075741/server/redteam-analytics.conf', $this->fake->files))->toBeFalse();
+});
+
+it('save cleans up stale http-context file when new settings have no gates', function () {
+    $this->fake->withFile('/etc/nginx/conf.d/redteam-forge-3075741.conf', "# stale http\n");
+    $this->fake->shouldReturnForCommand('nginx -t', 0, "ok\n");
+
+    $this->registry->save(aForgeServer(), '3075741', new ForgeSiteSettings(
+        analyticsEnabled: true,
+        scriptBody: '<script>x</script>',
+    ));
+
+    expect(array_key_exists('/etc/nginx/conf.d/redteam-forge-3075741.conf', $this->fake->files))->toBeFalse();
+    expect($this->fake->files['/etc/nginx/forge-conf/3075741/server/redteam-analytics.conf'] ?? null)->not->toBeNull();
+});
+
+it('auto-wraps the script body in <script> tags when the user did not include any', function () {
+    $rendered = (new ForgeSiteSettingsRenderer)->render('3075741', new ForgeSiteSettings(
+        analyticsEnabled: true,
+        scriptBody: "console.log('hi');",
+    ));
+
+    expect($rendered->serverContext)->toContain("sub_filter '</head>' '<script>console.log(\\'hi\\');</script></head>';");
+});
+
+it('leaves the script body alone when the user already provided a <script> tag', function () {
+    $rendered = (new ForgeSiteSettingsRenderer)->render('3075741', new ForgeSiteSettings(
+        analyticsEnabled: true,
+        scriptBody: '<script async src="https://cdn/x.js"></script>',
+    ));
+
+    expect($rendered->serverContext)->toContain("sub_filter '</head>' '<script async src=\"https://cdn/x.js\"></script></head>';");
+});
+
+it('writes managed backups outside the nginx include path', function () {
+    seedRenderedSite($this->fake, '3075741', new ForgeSiteSettings(
+        analyticsEnabled: true,
+        scriptBody: '<script>old</script>',
+    ));
+    $this->fake->shouldReturnForCommand('nginx -t', 0, "ok\n");
+
+    $this->registry->save(aForgeServer(), '3075741', new ForgeSiteSettings(
+        analyticsEnabled: true,
+        scriptBody: '<script>new</script>',
+    ));
+
+    $backupKeys = array_keys($this->fake->files);
+    $managedDirBackups = array_filter($backupKeys, fn (string $p): bool => str_starts_with($p, '/etc/nginx/forge-conf/3075741/server/') && str_contains($p, '.bak.'));
+    $redteamBackups = array_filter($backupKeys, fn (string $p): bool => str_starts_with($p, '/etc/nginx/redteam-backups/'));
+
+    expect($managedDirBackups)->toBe([])
+        ->and($redteamBackups)->not->toBe([]);
+});
+
+it('sweeps legacy in-place .bak files before writing a managed file', function () {
+    $this->fake->shouldReturn(0, "/etc/nginx/forge-conf/3075741/site.conf\n");
+    $this->fake->shouldReturnForCommand('nginx -t', 0, "ok\n");
+
+    $this->registry->save(aForgeServer(), '3075741', new ForgeSiteSettings(
+        analyticsEnabled: true,
+        scriptBody: '<script>x</script>',
+    ));
+
+    $sweepHit = collect($this->fake->privilegedCommands)->contains(
+        fn (array $p): bool => str_starts_with($p['command'], 'find ')
+            && str_contains($p['command'], '/etc/nginx/forge-conf/3075741/server')
+            && str_contains($p['command'], "'redteam-analytics.conf.bak.*'")
+            && str_contains($p['command'], '-delete'),
+    );
+
+    expect($sweepHit)->toBeTrue();
 });
 
 it('rejects non-numeric site ids', function () {

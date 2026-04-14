@@ -10,6 +10,7 @@ use App\Filament\Resources\Servers\Pages\ManageForgeSites;
 use App\Filament\Resources\Servers\Pages\ManageServerAntibot;
 use App\Filament\Resources\Servers\Pages\ManageServerLogs;
 use App\Filament\Resources\Servers\Pages\ManageServerNginx;
+use App\Filament\Resources\Servers\Pages\ManageServerOverview;
 use Filament\Actions\Action;
 use Filament\Actions\BulkActionGroup;
 use Filament\Actions\DeleteAction;
@@ -56,7 +57,13 @@ class ServersTable
                     ->sortable(),
             ])
             ->defaultSort('name')
+            ->recordUrl(fn ($record): string => ManageServerOverview::getUrl(['record' => $record]))
             ->recordActions([
+                Action::make('overview')
+                    ->label('Overview')
+                    ->icon(Heroicon::OutlinedSquares2x2)
+                    ->color('primary')
+                    ->url(fn ($record): string => ManageServerOverview::getUrl(['record' => $record])),
                 TestConnectionAction::make(),
                 Action::make('nginx')
                     ->label('Nginx')

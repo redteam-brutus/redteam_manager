@@ -19,7 +19,15 @@ use Throwable;
 
 class SshConnectionManager
 {
+    /** @var array<string, SshSession> */
+    private array $cachedSessions = [];
+
     public function __construct(private readonly SshClient $client) {}
+
+    public function __destruct()
+    {
+        $this->closeAllCachedSessions();
+    }
 
     public function testConnection(Server $server): ConnectionTestResult
     {
@@ -70,13 +78,7 @@ class SshConnectionManager
 
     public function run(Server $server, string $command, int $timeoutSeconds = 10): CommandResult
     {
-        $session = $this->openAuthenticatedSession($server);
-
-        try {
-            return $session->run($command, $timeoutSeconds);
-        } finally {
-            $session->disconnect();
-        }
+        return $this->cachedSession($server)->run($command, $timeoutSeconds);
     }
 
     public function runPrivileged(Server $server, string $command, int $timeoutSeconds = 10): CommandResult
@@ -85,28 +87,18 @@ class SshConnectionManager
             throw new SshAuthException("Sudo is enabled on server #{$server->getKey()} but no sudo password is set.");
         }
 
-        $session = $this->openAuthenticatedSession($server);
+        $session = $this->cachedSession($server);
 
-        try {
-            if ($server->use_sudo) {
-                return $session->runPrivileged($command, (string) $server->sudo_password, $timeoutSeconds);
-            }
-
-            return $session->run($command, $timeoutSeconds);
-        } finally {
-            $session->disconnect();
+        if ($server->use_sudo) {
+            return $session->runPrivileged($command, (string) $server->sudo_password, $timeoutSeconds);
         }
+
+        return $session->run($command, $timeoutSeconds);
     }
 
     public function readFile(Server $server, string $path): string
     {
-        $session = $this->openAuthenticatedSession($server);
-
-        try {
-            return $session->readFile($path);
-        } finally {
-            $session->disconnect();
-        }
+        return $this->cachedSession($server)->readFile($path);
     }
 
     /**
@@ -114,57 +106,60 @@ class SshConnectionManager
      */
     public function listFiles(Server $server, string $pattern): array
     {
-        $session = $this->openAuthenticatedSession($server);
-
-        try {
-            return $session->listFiles($pattern);
-        } finally {
-            $session->disconnect();
-        }
+        return $this->cachedSession($server)->listFiles($pattern);
     }
 
     public function writeFile(Server $server, string $path, string $content): void
     {
-        $session = $this->openAuthenticatedSession($server);
-
-        try {
-            $session->writeFile($path, $content);
-        } finally {
-            $session->disconnect();
-        }
+        $this->cachedSession($server)->writeFile($path, $content);
     }
 
     public function moveFile(Server $server, string $from, string $to): void
     {
-        $session = $this->openAuthenticatedSession($server);
-
-        try {
-            $session->moveFile($from, $to);
-        } finally {
-            $session->disconnect();
-        }
+        $this->cachedSession($server)->moveFile($from, $to);
     }
 
     public function deleteFile(Server $server, string $path): void
     {
-        $session = $this->openAuthenticatedSession($server);
-
-        try {
-            $session->deleteFile($path);
-        } finally {
-            $session->disconnect();
-        }
+        $this->cachedSession($server)->deleteFile($path);
     }
 
     public function fileExists(Server $server, string $path): bool
     {
-        $session = $this->openAuthenticatedSession($server);
+        return $this->cachedSession($server)->fileExists($path);
+    }
 
-        try {
-            return $session->fileExists($path);
-        } finally {
-            $session->disconnect();
+    /**
+     * Explicitly release cached sessions. Call this at the end of a Livewire
+     * action or long-running job to avoid stale sessions across pings.
+     */
+    public function closeCachedSessions(): void
+    {
+        $this->closeAllCachedSessions();
+    }
+
+    private function cachedSession(Server $server): SshSession
+    {
+        $key = (string) $server->getKey();
+
+        if (isset($this->cachedSessions[$key])) {
+            return $this->cachedSessions[$key];
         }
+
+        return $this->cachedSessions[$key] = $this->openAuthenticatedSession($server);
+    }
+
+    private function closeAllCachedSessions(): void
+    {
+        foreach ($this->cachedSessions as $session) {
+            try {
+                $session->disconnect();
+            } catch (Throwable) {
+                // ignore — best effort
+            }
+        }
+
+        $this->cachedSessions = [];
     }
 
     /**

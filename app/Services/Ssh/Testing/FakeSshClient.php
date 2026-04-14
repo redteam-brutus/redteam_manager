@@ -26,6 +26,8 @@ class FakeSshClient implements SshClient
 
     public ?ConnectionConfig $lastConfig = null;
 
+    public int $connectCount = 0;
+
     /** @var list<string> */
     public array $commands = [];
 
@@ -120,6 +122,7 @@ class FakeSshClient implements SshClient
     public function connect(ConnectionConfig $config): SshSession
     {
         $this->lastConfig = $config;
+        $this->connectCount++;
 
         if ($this->connectError !== null) {
             throw new SshConnectionException($this->connectError);

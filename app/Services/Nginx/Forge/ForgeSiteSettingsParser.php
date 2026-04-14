@@ -9,7 +9,9 @@ use App\Services\Nginx\Forge\Dto\ForgeSiteSettings;
 class ForgeSiteSettingsParser
 {
     /**
-     * Signal table inverse of ForgeSiteSettingsRenderer::SIGNAL_TABLE.
+     * Signal table inverse of ForgeSiteSettingsRenderer::SIGNAL_TABLE. Captured variables are
+     * first normalized via stripSitePrefix() so site-scoped helpers (e.g. $site_123_has_fbclid)
+     * resolve to the underlying signal name used as the lookup key here.
      *
      * @var array<string, array{field: string, value: string}>
      */
@@ -23,6 +25,8 @@ class ForgeSiteSettingsParser
     public function parse(string $content): ForgeSiteSettings
     {
         $gated = $this->extractGatedAnalytics($content);
+        $targetCountries = $this->extractTargetCountries($content);
+        $targetPages = $this->extractTargetPages($content);
 
         if ($gated !== null) {
             return new ForgeSiteSettings(
@@ -35,6 +39,8 @@ class ForgeSiteSettingsParser
                 gateHasFbclid: $gated['gates']['gateHasFbclid'] ?? false,
                 gateIsTargetCountry: $gated['gates']['gateIsTargetCountry'] ?? false,
                 gateIsTargetPage: $gated['gates']['gateIsTargetPage'] ?? false,
+                targetCountries: $targetCountries,
+                targetPages: $targetPages,
             );
         }
 
@@ -44,6 +50,8 @@ class ForgeSiteSettingsParser
             scriptBody: $this->extractScriptBody($content) ?? '',
             conditionalAccessLog: $this->hasConditionalAccessLog($content),
             accessLogPath: $this->extractAccessLogPath($content) ?? '',
+            targetCountries: $targetCountries,
+            targetPages: $targetPages,
         );
     }
 
@@ -120,7 +128,8 @@ class ForgeSiteSettingsParser
         $gates = [];
 
         foreach ($varList as $index => $var) {
-            $lookup = self::SIGNAL_LOOKUP[$var] ?? null;
+            $normalized = $this->stripSitePrefix($var);
+            $lookup = self::SIGNAL_LOOKUP[$normalized] ?? null;
 
             if ($lookup === null) {
                 continue;
@@ -134,6 +143,11 @@ class ForgeSiteSettingsParser
         }
 
         return $gates;
+    }
+
+    private function stripSitePrefix(string $var): string
+    {
+        return preg_replace('/^site_[0-9]+_/', '', $var) ?? $var;
     }
 
     private function stripTrailingTag(string $replacement, string $tag): string
@@ -172,13 +186,12 @@ class ForgeSiteSettingsParser
 
     private function hasConditionalAccessLog(string $content): bool
     {
-        return str_contains($content, '$log_specific_fbclid')
-            && preg_match('/access_log\s+\S.*if=\$log_specific_fbclid\s*;/', $content) === 1;
+        return preg_match('/access_log\s+\S.*if=\$site_[0-9]+_log_fbclid\s*;/', $content) === 1;
     }
 
     private function extractAccessLogPath(string $content): ?string
     {
-        if (preg_match('/access_log\s+(\'((?:\\\\.|[^\'\\\\])*)\'|(\S+))\s+combined\s+if=\$log_specific_fbclid\s*;/', $content, $m) !== 1) {
+        if (preg_match('/access_log\s+(\'((?:\\\\.|[^\'\\\\])*)\'|(\S+))\s+combined\s+if=\$site_[0-9]+_log_fbclid\s*;/', $content, $m) !== 1) {
             return null;
         }
 
@@ -187,6 +200,49 @@ class ForgeSiteSettingsParser
         }
 
         return $m[3] ?? '';
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function extractTargetCountries(string $content): array
+    {
+        $body = $this->extractSiteMapBody($content, '$http_cf_ipcountry', 'is_target_country');
+
+        if ($body === null || preg_match_all('/"([A-Z]{2})"\s+1\s*;/', $body, $m) === false) {
+            return [];
+        }
+
+        return $m[1] ?? [];
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function extractTargetPages(string $content): array
+    {
+        $body = $this->extractSiteMapBody($content, '$request_uri', 'is_target_page');
+
+        if ($body === null || preg_match_all('/"~\*((?:\\\\.|[^"\\\\])*)"\s+1\s*;/', $body, $m) === false) {
+            return [];
+        }
+
+        return $m[1] ?? [];
+    }
+
+    private function extractSiteMapBody(string $content, string $source, string $suffix): ?string
+    {
+        $pattern = sprintf(
+            '/map\s+%s\s+\$site_[0-9]+_%s\s*\{([^}]*)\}/',
+            preg_quote($source, '/'),
+            preg_quote($suffix, '/'),
+        );
+
+        if (preg_match($pattern, $content, $m) !== 1) {
+            return null;
+        }
+
+        return $m[1];
     }
 
     private function subFilterPattern(): string

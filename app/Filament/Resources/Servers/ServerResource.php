@@ -11,6 +11,7 @@ use App\Filament\Resources\Servers\Pages\ManageForgeSites;
 use App\Filament\Resources\Servers\Pages\ManageServerAntibot;
 use App\Filament\Resources\Servers\Pages\ManageServerLogs;
 use App\Filament\Resources\Servers\Pages\ManageServerNginx;
+use App\Filament\Resources\Servers\Pages\ManageServerOverview;
 use App\Filament\Resources\Servers\Schemas\ServerForm;
 use App\Filament\Resources\Servers\Tables\ServersTable;
 use App\Models\Server;
@@ -58,6 +59,7 @@ class ServerResource extends Resource
             'forge-sites' => ManageForgeSites::route('/{record}/forge-sites'),
             'antibot' => ManageServerAntibot::route('/{record}/antibot'),
             'logs' => ManageServerLogs::route('/{record}/logs'),
+            'overview' => ManageServerOverview::route('/{record}/overview'),
         ];
     }
 }

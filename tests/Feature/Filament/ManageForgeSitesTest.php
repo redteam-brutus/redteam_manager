@@ -40,15 +40,14 @@ it('mounts and loads the forge site list', function () {
 });
 
 it('selects a site and hydrates the form from an existing managed file', function () {
-    $renderer = new ForgeSiteSettingsRenderer;
-    $content = $renderer->render('3075741', new ForgeSiteSettings(
+    $rendered = (new ForgeSiteSettingsRenderer)->render('3075741', new ForgeSiteSettings(
         analyticsEnabled: true,
         trackingTag: '</head>',
         scriptBody: '<script>var a=1;</script>',
     ));
 
     $this->fake->shouldReturn(0, "/etc/nginx/forge-conf/3075741/site.conf\n");
-    $this->fake->withFile('/etc/nginx/forge-conf/3075741/server/redteam-analytics.conf', $content);
+    $this->fake->withFile('/etc/nginx/forge-conf/3075741/server/redteam-analytics.conf', $rendered->serverContext);
 
     $server = serverForForgePage();
 
@@ -110,8 +109,7 @@ it('notifies danger when nginx -t rejects the new managed file', function () {
 });
 
 it('hydrates multi-signal gates from a composite managed file', function () {
-    $renderer = new ForgeSiteSettingsRenderer;
-    $content = $renderer->render('3075741', new ForgeSiteSettings(
+    $rendered = (new ForgeSiteSettingsRenderer)->render('3075741', new ForgeSiteSettings(
         analyticsEnabled: true,
         scriptBody: '<script>gated</script>',
         gateNotBot: true,
@@ -120,7 +118,8 @@ it('hydrates multi-signal gates from a composite managed file', function () {
     ));
 
     $this->fake->shouldReturn(0, "/etc/nginx/forge-conf/3075741/site.conf\n");
-    $this->fake->withFile('/etc/nginx/forge-conf/3075741/server/redteam-analytics.conf', $content);
+    $this->fake->withFile('/etc/nginx/conf.d/redteam-forge-3075741.conf', $rendered->httpContext);
+    $this->fake->withFile('/etc/nginx/forge-conf/3075741/server/redteam-analytics.conf', $rendered->serverContext);
 
     $server = serverForForgePage();
 
@@ -131,6 +130,26 @@ it('hydrates multi-signal gates from a composite managed file', function () {
         ->assertSet('data.gateIsTargetCountry', false)
         ->assertSet('data.gateIsTargetPage', true)
         ->assertSet('data.scriptBody', '<script>gated</script>');
+});
+
+it('auto-reloads nginx after a successful save', function () {
+    $this->fake->shouldReturn(0, "/etc/nginx/forge-conf/3075741/site.conf\n");
+    $this->fake->shouldReturnForCommand('nginx -t', 0, "ok\n");
+
+    $server = serverForForgePage();
+
+    Livewire::test(ManageForgeSites::class, ['record' => $server->id])
+        ->call('selectSite', '3075741')
+        ->set('data.analyticsEnabled', true)
+        ->set('data.scriptBody', '<script>x</script>')
+        ->call('saveSite')
+        ->assertNotified('Nginx reloaded');
+
+    $reloadRan = collect($this->fake->privilegedCommands)->contains(
+        fn (array $p): bool => str_contains($p['command'], 'systemctl reload nginx'),
+    );
+
+    expect($reloadRan)->toBeTrue();
 });
 
 it('disables a managed file via the disable action', function () {
