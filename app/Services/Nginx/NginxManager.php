@@ -196,6 +196,8 @@ class NginxManager
         try {
             if ($existed) {
                 $this->copyFile($server, $path, $backupPath);
+            } else {
+                $this->ensureDirectoryExists($server, dirname($path));
             }
 
             $this->installFile($server, $stagingPath, $path);
@@ -419,6 +421,19 @@ class NginxManager
             output: $validationOutput,
             backupPath: $backupPath,
         );
+    }
+
+    private function ensureDirectoryExists(Server $server, string $directory): void
+    {
+        $cmd = 'mkdir -p '.escapeshellarg($directory).' 2>&1';
+
+        $result = $server->use_sudo
+            ? $this->ssh->runPrivileged($server, $cmd)
+            : $this->ssh->run($server, $cmd);
+
+        if ($result->exitCode !== 0) {
+            throw new SshCommandException("Failed to create directory {$directory}: ".trim($result->stdout));
+        }
     }
 
     private function removeFileStrict(Server $server, string $path): void

@@ -110,6 +110,23 @@ it('find parses an existing managed file', function () {
         ->and($site->settings->accessLogPath)->toBe('/var/log/nginx/site-fbclid.log');
 });
 
+it('creates the forge-conf/<id>/server directory when it does not yet exist', function () {
+    $this->fake->shouldReturnForCommand('nginx -t', 0, "ok\n");
+
+    $this->registry->save(aForgeServer(), '3075741', new ForgeSiteSettings(
+        analyticsEnabled: true,
+        scriptBody: '<script>x</script>',
+    ));
+
+    $privileged = collect($this->fake->privilegedCommands);
+    $hasMkdir = $privileged->contains(
+        fn (array $p): bool => str_starts_with($p['command'], 'mkdir -p ')
+            && str_contains($p['command'], '/etc/nginx/forge-conf/3075741/server')
+    );
+
+    expect($hasMkdir)->toBeTrue();
+});
+
 it('save writes the managed file via sudo mv', function () {
     $this->fake->shouldReturnForCommand('nginx -t', 0, "ok\n");
 
