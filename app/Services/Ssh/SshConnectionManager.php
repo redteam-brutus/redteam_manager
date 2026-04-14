@@ -79,6 +79,50 @@ class SshConnectionManager
         }
     }
 
+    public function runPrivileged(Server $server, string $command, int $timeoutSeconds = 10): CommandResult
+    {
+        if ($server->use_sudo && blank($server->sudo_password)) {
+            throw new SshAuthException("Sudo is enabled on server #{$server->getKey()} but no sudo password is set.");
+        }
+
+        $session = $this->openAuthenticatedSession($server);
+
+        try {
+            if ($server->use_sudo) {
+                return $session->runPrivileged($command, (string) $server->sudo_password, $timeoutSeconds);
+            }
+
+            return $session->run($command, $timeoutSeconds);
+        } finally {
+            $session->disconnect();
+        }
+    }
+
+    public function readFile(Server $server, string $path): string
+    {
+        $session = $this->openAuthenticatedSession($server);
+
+        try {
+            return $session->readFile($path);
+        } finally {
+            $session->disconnect();
+        }
+    }
+
+    /**
+     * @return list<string>
+     */
+    public function listFiles(Server $server, string $pattern): array
+    {
+        $session = $this->openAuthenticatedSession($server);
+
+        try {
+            return $session->listFiles($pattern);
+        } finally {
+            $session->disconnect();
+        }
+    }
+
     /**
      * Open a session, authenticate, verify host fingerprint (TOFU).
      *

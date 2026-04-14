@@ -7,6 +7,7 @@ namespace App\Services\Ssh\Testing;
 use App\Services\Ssh\Contracts\SshSession;
 use App\Services\Ssh\Dto\CommandResult;
 use App\Services\Ssh\Exceptions\SshAuthException;
+use App\Services\Ssh\Exceptions\SshCommandException;
 
 class FakeSshSession implements SshSession
 {
@@ -28,11 +29,30 @@ class FakeSshSession implements SshSession
     {
         $this->client->commands[] = $command;
 
-        return new CommandResult(
-            stdout: $this->client->commandStdout,
-            stderr: $this->client->commandStderr,
-            exitCode: $this->client->commandExitCode,
-        );
+        return $this->client->resolveResponse($command);
+    }
+
+    public function runPrivileged(string $command, string $sudoPassword, int $timeoutSeconds = 10): CommandResult
+    {
+        $this->client->commands[] = $command;
+        $this->client->privilegedCommands[] = ['command' => $command, 'password' => $sudoPassword];
+        $this->client->lastSudoPassword = $sudoPassword;
+
+        return $this->client->resolveResponse($command);
+    }
+
+    public function readFile(string $path): string
+    {
+        if (! array_key_exists($path, $this->client->files)) {
+            throw new SshCommandException("No canned content for path: {$path}");
+        }
+
+        return $this->client->files[$path];
+    }
+
+    public function listFiles(string $pattern): array
+    {
+        return $this->client->listings[$pattern] ?? [];
     }
 
     public function disconnect(): void

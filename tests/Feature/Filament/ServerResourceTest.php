@@ -5,12 +5,14 @@ declare(strict_types=1);
 use App\Enums\ConnectionStatus;
 use App\Filament\Resources\Servers\Actions\TestConnectionAction;
 use App\Filament\Resources\Servers\Pages\CreateServer;
+use App\Filament\Resources\Servers\Pages\EditServer;
 use App\Filament\Resources\Servers\Pages\ListServers;
 use App\Models\Server;
 use App\Models\SshKey;
 use App\Models\User;
 use App\Services\Ssh\Contracts\SshClient;
 use App\Services\Ssh\Testing\FakeSshClient;
+use Illuminate\Support\Facades\DB;
 use Livewire\Livewire;
 
 beforeEach(function () {
@@ -86,4 +88,43 @@ it('marks a host key mismatch with a warning notification', function () {
         ->assertNotified('Host key mismatch');
 
     expect($server->refresh()->last_connection_status)->toBe(ConnectionStatus::HostMismatch);
+});
+
+it('creates a server with sudo enabled and stores an encrypted password', function () {
+    $sshKey = SshKey::factory()->create();
+
+    Livewire::test(CreateServer::class)
+        ->fillForm([
+            'name' => 'edge-sudo',
+            'host' => '10.0.0.2',
+            'port' => 22,
+            'ssh_user' => 'ubuntu',
+            'ssh_key_id' => $sshKey->id,
+            'use_sudo' => true,
+            'sudo_password' => 'hunter2',
+        ])
+        ->call('create')
+        ->assertHasNoFormErrors();
+
+    $server = Server::firstWhere('name', 'edge-sudo');
+
+    expect($server->use_sudo)->toBeTrue()
+        ->and($server->sudo_password)->toBe('hunter2');
+
+    $raw = DB::table('servers')->where('id', $server->id)->value('sudo_password');
+
+    expect($raw)->not->toBe('hunter2');
+});
+
+it('preserves the existing sudo password when the edit form leaves it blank', function () {
+    $server = Server::factory()->withSudo('original-pass')->create();
+
+    Livewire::test(EditServer::class, ['record' => $server->getRouteKey()])
+        ->fillForm([
+            'sudo_password' => '',
+        ])
+        ->call('save')
+        ->assertHasNoFormErrors();
+
+    expect($server->refresh()->sudo_password)->toBe('original-pass');
 });

@@ -7,6 +7,8 @@ namespace App\Filament\Resources\Servers\Schemas;
 use App\Models\SshKey;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
+use Filament\Forms\Components\Toggle;
+use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Schema;
 
 class ServerForm
@@ -43,6 +45,21 @@ class ServerForm
                 ->searchable()
                 ->preload()
                 ->required(),
+
+            Toggle::make('use_sudo')
+                ->label('Use sudo for privileged commands')
+                ->helperText('Enable if the SSH user needs sudo for commands like `nginx -t` and `systemctl reload nginx`.')
+                ->live(),
+
+            TextInput::make('sudo_password')
+                ->label('Sudo password')
+                ->password()
+                ->revealable()
+                ->maxLength(255)
+                ->helperText('Stored encrypted. Leave blank on edit to keep the existing password.')
+                ->visible(fn (Get $get): bool => (bool) $get('use_sudo'))
+                ->required(fn (Get $get, string $operation): bool => $operation === 'create' && (bool) $get('use_sudo'))
+                ->dehydrated(fn (?string $state): bool => filled($state)),
         ]);
     }
 }

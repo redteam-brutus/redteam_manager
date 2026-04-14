@@ -6,10 +6,13 @@ namespace App\Filament\Resources\Servers\Tables;
 
 use App\Enums\ConnectionStatus;
 use App\Filament\Resources\Servers\Actions\TestConnectionAction;
+use App\Filament\Resources\Servers\Pages\ManageServerNginx;
+use Filament\Actions\Action;
 use Filament\Actions\BulkActionGroup;
 use Filament\Actions\DeleteAction;
 use Filament\Actions\DeleteBulkAction;
 use Filament\Actions\EditAction;
+use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 
@@ -52,6 +55,11 @@ class ServersTable
             ->defaultSort('name')
             ->recordActions([
                 TestConnectionAction::make(),
+                Action::make('nginx')
+                    ->label('Nginx')
+                    ->icon(Heroicon::OutlinedCog)
+                    ->color('gray')
+                    ->url(fn ($record): string => ManageServerNginx::getUrl(['record' => $record])),
                 EditAction::make(),
                 DeleteAction::make(),
             ])

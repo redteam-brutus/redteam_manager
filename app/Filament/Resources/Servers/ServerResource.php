@@ -7,6 +7,7 @@ namespace App\Filament\Resources\Servers;
 use App\Filament\Resources\Servers\Pages\CreateServer;
 use App\Filament\Resources\Servers\Pages\EditServer;
 use App\Filament\Resources\Servers\Pages\ListServers;
+use App\Filament\Resources\Servers\Pages\ManageServerNginx;
 use App\Filament\Resources\Servers\Schemas\ServerForm;
 use App\Filament\Resources\Servers\Tables\ServersTable;
 use App\Models\Server;
@@ -50,6 +51,7 @@ class ServerResource extends Resource
             'index' => ListServers::route('/'),
             'create' => CreateServer::route('/create'),
             'edit' => EditServer::route('/{record}/edit'),
+            'nginx' => ManageServerNginx::route('/{record}/nginx'),
         ];
     }
 }
