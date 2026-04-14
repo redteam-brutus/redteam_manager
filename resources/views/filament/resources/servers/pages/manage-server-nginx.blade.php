@@ -4,7 +4,7 @@
             <x-filament::section>
                 <x-slot name="heading">Config files</x-slot>
 
-                <x-slot name="headerActions">
+                <x-slot name="afterHeader">
                     <x-filament::link wire:click="loadFiles" color="gray" size="xs">
                         Refresh
                     </x-filament::link>
@@ -72,7 +72,7 @@
                 </x-slot>
 
                 @if ($selectedPath && $fileContent !== null)
-                    <x-slot name="headerActions">
+                    <x-slot name="afterHeader">
                         @if ($editing)
                             <x-filament::button
                                 wire:click="discardDraft"
