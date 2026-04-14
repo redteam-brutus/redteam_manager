@@ -161,6 +161,32 @@ class PhpSecLibSshSession implements SshSession
         return $matches;
     }
 
+    public function writeFile(string $path, string $content): void
+    {
+        if (! $this->sftp()->put($path, $content)) {
+            throw new SshCommandException("Failed to write remote file: {$path}");
+        }
+    }
+
+    public function moveFile(string $from, string $to): void
+    {
+        if (! $this->sftp()->rename($from, $to)) {
+            throw new SshCommandException("Failed to rename {$from} to {$to}.");
+        }
+    }
+
+    public function deleteFile(string $path): void
+    {
+        if (! $this->sftp()->delete($path)) {
+            throw new SshCommandException("Failed to delete remote file: {$path}");
+        }
+    }
+
+    public function fileExists(string $path): bool
+    {
+        return $this->sftp()->file_exists($path);
+    }
+
     public function disconnect(): void
     {
         if ($this->sftp !== null && $this->sftp->isConnected()) {

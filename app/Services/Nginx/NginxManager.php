@@ -6,8 +6,11 @@ namespace App\Services\Nginx;
 
 use App\Models\Server;
 use App\Services\Nginx\Dto\NginxFile;
+use App\Services\Nginx\Dto\NginxSaveResult;
 use App\Services\Nginx\Dto\NginxTestResult;
+use App\Services\Ssh\Exceptions\SshException;
 use App\Services\Ssh\SshConnectionManager;
+use Illuminate\Support\Carbon;
 use InvalidArgumentException;
 
 class NginxManager
@@ -56,6 +59,91 @@ class NginxManager
         );
     }
 
+    public function fileHash(Server $server, string $path): string
+    {
+        $this->assertWithinRoot($path);
+
+        $escaped = escapeshellarg($path);
+        $result = $this->ssh->run($server, "sha256sum {$escaped} | awk '{print \$1}'");
+
+        $hash = trim($result->stdout);
+
+        if ($hash === '' || strlen($hash) !== 64) {
+            throw new \RuntimeException("Failed to hash remote file: {$path}");
+        }
+
+        return $hash;
+    }
+
+    public function saveFile(Server $server, string $path, string $content, string $expectedHash): NginxSaveResult
+    {
+        $this->assertWithinRoot($path);
+
+        try {
+            $currentHash = $this->fileHash($server, $path);
+        } catch (SshException $e) {
+            return new NginxSaveResult(ok: false, status: 'io_error', output: $e->getMessage());
+        }
+
+        if (! hash_equals($currentHash, $expectedHash)) {
+            return new NginxSaveResult(
+                ok: false,
+                status: 'stale',
+                output: 'File changed on disk since it was loaded.',
+            );
+        }
+
+        $timestamp = Carbon::now()->format('YmdHis');
+        $tmpPath = $path.'.redteam.tmp';
+        $backupPath = $path.'.bak.'.$timestamp;
+
+        try {
+            $this->ssh->writeFile($server, $tmpPath, $content);
+        } catch (SshException $e) {
+            return new NginxSaveResult(ok: false, status: 'io_error', output: $e->getMessage());
+        }
+
+        try {
+            $current = $this->ssh->readFile($server, $path);
+            $this->ssh->writeFile($server, $backupPath, $current);
+            $this->ssh->moveFile($server, $tmpPath, $path);
+        } catch (SshException $e) {
+            $this->safeDelete($server, $tmpPath);
+
+            return new NginxSaveResult(ok: false, status: 'io_error', output: $e->getMessage());
+        }
+
+        $validation = $this->validate($server);
+
+        if (! $validation->ok) {
+            try {
+                $this->ssh->moveFile($server, $backupPath, $path);
+            } catch (SshException $e) {
+                return new NginxSaveResult(
+                    ok: false,
+                    status: 'io_error',
+                    output: "nginx -t failed and automatic rollback also failed. Restore manually from {$backupPath}: {$e->getMessage()}",
+                    backupPath: $backupPath,
+                );
+            }
+
+            return new NginxSaveResult(
+                ok: false,
+                status: 'invalid_config',
+                output: $validation->output,
+            );
+        }
+
+        $this->pruneBackups($server, $path);
+
+        return new NginxSaveResult(
+            ok: true,
+            status: 'saved',
+            output: 'Saved with backup.',
+            backupPath: $backupPath,
+        );
+    }
+
     public function reload(Server $server): NginxTestResult
     {
         $validation = $this->validate($server);
@@ -70,6 +158,34 @@ class NginxManager
             ok: $result->exitCode === 0,
             output: $result->stdout !== '' ? $result->stdout : 'Nginx reloaded successfully.',
         );
+    }
+
+    private function pruneBackups(Server $server, string $path, int $keep = 10): void
+    {
+        try {
+            $backups = $this->ssh->listFiles($server, $path.'.bak.*');
+        } catch (SshException) {
+            return;
+        }
+
+        if (count($backups) <= $keep) {
+            return;
+        }
+
+        rsort($backups);
+
+        foreach (array_slice($backups, $keep) as $oldBackup) {
+            $this->safeDelete($server, $oldBackup);
+        }
+    }
+
+    private function safeDelete(Server $server, string $path): void
+    {
+        try {
+            $this->ssh->deleteFile($server, $path);
+        } catch (SshException) {
+            // swallow; cleanup is best-effort
+        }
     }
 
     private function classify(string $path): NginxFile

@@ -123,6 +123,50 @@ class SshConnectionManager
         }
     }
 
+    public function writeFile(Server $server, string $path, string $content): void
+    {
+        $session = $this->openAuthenticatedSession($server);
+
+        try {
+            $session->writeFile($path, $content);
+        } finally {
+            $session->disconnect();
+        }
+    }
+
+    public function moveFile(Server $server, string $from, string $to): void
+    {
+        $session = $this->openAuthenticatedSession($server);
+
+        try {
+            $session->moveFile($from, $to);
+        } finally {
+            $session->disconnect();
+        }
+    }
+
+    public function deleteFile(Server $server, string $path): void
+    {
+        $session = $this->openAuthenticatedSession($server);
+
+        try {
+            $session->deleteFile($path);
+        } finally {
+            $session->disconnect();
+        }
+    }
+
+    public function fileExists(Server $server, string $path): bool
+    {
+        $session = $this->openAuthenticatedSession($server);
+
+        try {
+            return $session->fileExists($path);
+        } finally {
+            $session->disconnect();
+        }
+    }
+
     /**
      * Open a session, authenticate, verify host fingerprint (TOFU).
      *

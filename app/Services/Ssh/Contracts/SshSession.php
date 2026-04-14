@@ -23,5 +23,13 @@ interface SshSession
      */
     public function listFiles(string $pattern): array;
 
+    public function writeFile(string $path, string $content): void;
+
+    public function moveFile(string $from, string $to): void;
+
+    public function deleteFile(string $path): void;
+
+    public function fileExists(string $path): bool;
+
     public function disconnect(): void;
 }

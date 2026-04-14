@@ -45,6 +45,17 @@ class FakeSshClient implements SshClient
     /** @var array<string, list<string>> */
     public array $listings = [];
 
+    /** @var list<array{path: string, content: string}> */
+    public array $writes = [];
+
+    /** @var list<array{from: string, to: string}> */
+    public array $moves = [];
+
+    /** @var list<string> */
+    public array $deletes = [];
+
+    public ?string $writeError = null;
+
     public function withHostFingerprint(string $fingerprint): self
     {
         $this->hostFingerprint = $fingerprint;
@@ -85,6 +96,13 @@ class FakeSshClient implements SshClient
     public function withFile(string $path, string $content): self
     {
         $this->files[$path] = $content;
+
+        return $this;
+    }
+
+    public function shouldFailWrite(string $message): self
+    {
+        $this->writeError = $message;
 
         return $this;
     }
