@@ -32,15 +32,18 @@
                                 <ul class="space-y-1">
                                     @foreach ($items as $file)
                                         <li>
-                                            <x-filament::link
-                                                tag="button"
-                                                wire:click="selectFile(@js($file['path']))"
-                                                :color="$selectedPath === $file['path'] ? 'primary' : 'gray'"
-                                                size="xs"
-                                                class="w-full truncate font-mono"
+                                            <button
+                                                type="button"
+                                                wire:click="selectFile('{{ $file['path'] }}')"
+                                                @class([
+                                                    'block w-full truncate rounded-md px-2 py-1 text-left font-mono text-xs transition',
+                                                    'bg-primary-50 text-primary-700 dark:bg-primary-500/10 dark:text-primary-300' => $selectedPath === $file['path'],
+                                                    'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-white/5' => $selectedPath !== $file['path'],
+                                                ])
+                                                title="{{ $file['path'] }}"
                                             >
                                                 {{ $file['relativePath'] }}
-                                            </x-filament::link>
+                                            </button>
                                         </li>
                                     @endforeach
                                 </ul>
