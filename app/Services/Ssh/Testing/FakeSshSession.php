@@ -38,7 +38,76 @@ class FakeSshSession implements SshSession
         $this->client->privilegedCommands[] = ['command' => $command, 'password' => $sudoPassword];
         $this->client->lastSudoPassword = $sudoPassword;
 
+        $this->applyFilesystemSideEffect($command);
+
         return $this->client->resolveResponse($command);
+    }
+
+    private function applyFilesystemSideEffect(string $command): void
+    {
+        $tokens = $this->tokenize($command);
+
+        if ($tokens === []) {
+            return;
+        }
+
+        $verb = array_shift($tokens);
+
+        if ($verb === 'cp') {
+            if ($tokens !== [] && $tokens[0] === '-p') {
+                array_shift($tokens);
+            }
+
+            [$source, $destination] = [$tokens[0] ?? null, $tokens[1] ?? null];
+
+            if ($source !== null && $destination !== null && array_key_exists($source, $this->client->files)) {
+                $this->client->files[$destination] = $this->client->files[$source];
+            }
+
+            return;
+        }
+
+        if ($verb === 'mv') {
+            [$source, $destination] = [$tokens[0] ?? null, $tokens[1] ?? null];
+
+            if ($source !== null && $destination !== null && array_key_exists($source, $this->client->files)) {
+                $this->client->files[$destination] = $this->client->files[$source];
+                unset($this->client->files[$source]);
+            }
+
+            return;
+        }
+
+        if ($verb === 'rm') {
+            if ($tokens !== [] && $tokens[0] === '-f') {
+                array_shift($tokens);
+            }
+
+            foreach ($tokens as $target) {
+                unset($this->client->files[$target]);
+            }
+        }
+    }
+
+    /**
+     * Cheap parser for the `verb [flags] 'arg1' 'arg2'` pattern produced by
+     * escapeshellarg(), dropping trailing `2>&1` and surrounding single quotes.
+     */
+    private function tokenize(string $command): array
+    {
+        $command = preg_replace('/\s*2>&1\s*$/', '', $command) ?? $command;
+
+        if (preg_match_all("/'(?:[^'\\\\]|\\\\.)*'|\\S+/", $command, $matches) === false) {
+            return [];
+        }
+
+        return array_map(function (string $token): string {
+            if (str_starts_with($token, "'") && str_ends_with($token, "'")) {
+                return substr($token, 1, -1);
+            }
+
+            return $token;
+        }, $matches[0]);
     }
 
     public function readFile(string $path): string

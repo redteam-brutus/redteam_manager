@@ -8,9 +8,11 @@ use App\Models\Server;
 use App\Services\Nginx\Dto\NginxFile;
 use App\Services\Nginx\Dto\NginxSaveResult;
 use App\Services\Nginx\Dto\NginxTestResult;
+use App\Services\Ssh\Exceptions\SshCommandException;
 use App\Services\Ssh\Exceptions\SshException;
 use App\Services\Ssh\SshConnectionManager;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Str;
 use InvalidArgumentException;
 
 class NginxManager
@@ -94,21 +96,20 @@ class NginxManager
         }
 
         $timestamp = Carbon::now()->format('YmdHis');
-        $tmpPath = $path.'.redteam.tmp';
+        $stagingPath = '/tmp/redteam-'.Str::random(16).'.tmp';
         $backupPath = $path.'.bak.'.$timestamp;
 
         try {
-            $this->ssh->writeFile($server, $tmpPath, $content);
+            $this->ssh->writeFile($server, $stagingPath, $content);
         } catch (SshException $e) {
             return new NginxSaveResult(ok: false, status: 'io_error', output: $e->getMessage());
         }
 
         try {
-            $current = $this->ssh->readFile($server, $path);
-            $this->ssh->writeFile($server, $backupPath, $current);
-            $this->ssh->moveFile($server, $tmpPath, $path);
+            $this->copyFile($server, $path, $backupPath);
+            $this->installFile($server, $stagingPath, $path);
         } catch (SshException $e) {
-            $this->safeDelete($server, $tmpPath);
+            $this->safeRemoveStaging($server, $stagingPath);
 
             return new NginxSaveResult(ok: false, status: 'io_error', output: $e->getMessage());
         }
@@ -117,7 +118,7 @@ class NginxManager
 
         if (! $validation->ok) {
             try {
-                $this->ssh->moveFile($server, $backupPath, $path);
+                $this->installFile($server, $backupPath, $path);
             } catch (SshException $e) {
                 return new NginxSaveResult(
                     ok: false,
@@ -175,16 +176,72 @@ class NginxManager
         rsort($backups);
 
         foreach (array_slice($backups, $keep) as $oldBackup) {
-            $this->safeDelete($server, $oldBackup);
+            $this->safeRemove($server, $oldBackup);
         }
     }
 
-    private function safeDelete(Server $server, string $path): void
+    /**
+     * Copy a target file into a same-directory backup, using sudo when the
+     * server requires it so the destination inside /etc/nginx is writable.
+     */
+    private function copyFile(Server $server, string $source, string $destination): void
+    {
+        if ($server->use_sudo) {
+            $cmd = sprintf('cp -p %s %s', escapeshellarg($source), escapeshellarg($destination));
+            $this->runSudoOrFail($server, $cmd, "Failed to back up {$source} to {$destination}");
+
+            return;
+        }
+
+        $current = $this->ssh->readFile($server, $source);
+        $this->ssh->writeFile($server, $destination, $current);
+    }
+
+    /**
+     * Rename (atomic-on-same-filesystem) staging into the final target path,
+     * using sudo when the server requires it. /tmp and /etc are normally on
+     * the same filesystem on Linux, so mv performs a rename.
+     */
+    private function installFile(Server $server, string $source, string $destination): void
+    {
+        if ($server->use_sudo) {
+            $cmd = sprintf('mv %s %s', escapeshellarg($source), escapeshellarg($destination));
+            $this->runSudoOrFail($server, $cmd, "Failed to install {$source} at {$destination}");
+
+            return;
+        }
+
+        $this->ssh->moveFile($server, $source, $destination);
+    }
+
+    private function safeRemove(Server $server, string $path): void
+    {
+        try {
+            $server->use_sudo
+                ? $this->ssh->runPrivileged($server, 'rm -f '.escapeshellarg($path))
+                : $this->ssh->deleteFile($server, $path);
+        } catch (SshException) {
+            // best-effort cleanup
+        }
+    }
+
+    private function safeRemoveStaging(Server $server, string $path): void
     {
         try {
             $this->ssh->deleteFile($server, $path);
         } catch (SshException) {
-            // swallow; cleanup is best-effort
+            // best-effort; staging lives in /tmp and gets cleaned by the OS
+        }
+    }
+
+    private function runSudoOrFail(Server $server, string $command, string $failureMessage): void
+    {
+        $result = $this->ssh->runPrivileged($server, $command.' 2>&1');
+
+        if ($result->exitCode !== 0) {
+            throw new SshCommandException(
+                $failureMessage.': '.($result->stdout !== '' ? trim($result->stdout) : "exit {$result->exitCode}")
+            );
         }
     }
 

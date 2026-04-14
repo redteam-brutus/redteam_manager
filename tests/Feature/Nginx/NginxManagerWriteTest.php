@@ -45,11 +45,39 @@ it('writes tmp, backup, renames, validates and returns saved', function () {
         ->and($this->fake->files[$path])->toBe($updated);
 
     $writePaths = array_column($this->fake->writes, 'path');
-    expect($writePaths)->toContain($path.'.redteam.tmp')
+    $hasStaging = collect($writePaths)->some(fn (string $p): bool => str_starts_with($p, '/tmp/redteam-'));
+
+    expect($hasStaging)->toBeTrue()
         ->and($writePaths)->toContain($result->backupPath);
 
     $moveTargets = array_column($this->fake->moves, 'to');
     expect($moveTargets)->toContain($path);
+});
+
+it('installs the new file via sudo mv when the server requires sudo', function () {
+    $path = '/etc/nginx/nginx.conf';
+    $original = "user root;\n";
+    $updated = "user www-data;\n";
+    $hash = seedFile($this->fake, $path, $original);
+    $this->fake->shouldReturnForCommand('nginx -t', 0, "ok\n");
+
+    $server = Server::factory()->withSudo('hunter2')->create([
+        'host_fingerprint' => 'fingerprint-known',
+    ]);
+
+    $result = $this->manager->saveFile($server, $path, $updated, $hash);
+
+    expect($result->ok)->toBeTrue();
+
+    $privileged = collect($this->fake->privilegedCommands);
+
+    expect($privileged->contains(fn (array $p): bool => str_starts_with($p['command'], 'cp -p ')))
+        ->toBeTrue();
+
+    expect($privileged->contains(fn (array $p): bool => str_starts_with($p['command'], 'mv ') && str_contains($p['command'], $path)))
+        ->toBeTrue();
+
+    expect($this->fake->lastSudoPassword)->toBe('hunter2');
 });
 
 it('returns stale and writes nothing when the hash drifted', function () {
