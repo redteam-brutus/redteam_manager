@@ -13,6 +13,7 @@ beforeEach(function () {
     $this->actingAs(User::factory()->create());
     $this->fake = new FakeSshClient;
     $this->fake->withHostFingerprint('fingerprint-known');
+    $this->fake->shouldReturnForCommand('-type d -not -name server', 0, '');
     $this->app->instance(SshClient::class, $this->fake);
 });
 

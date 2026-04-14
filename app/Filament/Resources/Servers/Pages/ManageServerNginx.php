@@ -48,6 +48,9 @@ class ManageServerNginx extends Page
     /** @var list<array{path: string, group: string, relativePath: string}> */
     public array $files = [];
 
+    /** @var array<string, list<string>> */
+    public array $forgeDomains = [];
+
     public function mount(int|string $record): void
     {
         $this->record = $this->resolveRecord($record);
@@ -75,9 +78,12 @@ class ManageServerNginx extends Page
     public function loadFiles(): void
     {
         try {
-            $files = app(NginxManager::class)->listFiles($this->getServer());
+            $manager = app(NginxManager::class);
+            $files = $manager->listFiles($this->getServer());
+            $this->forgeDomains = $manager->listForgeDomains($this->getServer());
         } catch (SshException $e) {
             $this->files = [];
+            $this->forgeDomains = [];
             $this->selectedPath = null;
             $this->fileContent = null;
             $this->resetDraft();

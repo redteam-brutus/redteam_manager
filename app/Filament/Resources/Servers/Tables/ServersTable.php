@@ -6,6 +6,7 @@ namespace App\Filament\Resources\Servers\Tables;
 
 use App\Enums\ConnectionStatus;
 use App\Filament\Resources\Servers\Actions\TestConnectionAction;
+use App\Filament\Resources\Servers\Pages\ManageForgeSites;
 use App\Filament\Resources\Servers\Pages\ManageServerNginx;
 use Filament\Actions\Action;
 use Filament\Actions\BulkActionGroup;
@@ -60,6 +61,11 @@ class ServersTable
                     ->icon(Heroicon::OutlinedCog)
                     ->color('gray')
                     ->url(fn ($record): string => ManageServerNginx::getUrl(['record' => $record])),
+                Action::make('forge')
+                    ->label('Forge sites')
+                    ->icon(Heroicon::OutlinedCodeBracket)
+                    ->color('gray')
+                    ->url(fn ($record): string => ManageForgeSites::getUrl(['record' => $record])),
                 EditAction::make(),
                 DeleteAction::make(),
             ])

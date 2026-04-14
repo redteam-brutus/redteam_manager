@@ -25,10 +25,22 @@
                 @else
                     <div class="fi-nginx-file-tree space-y-4">
                         @foreach ($grouped as $group => $items)
+                            @php
+                                $isForgeParent = preg_match('/^forge:([0-9]+)$/', $group, $m) === 1;
+                                $forgeId = $isForgeParent ? $m[1] : null;
+                                $domains = $forgeId !== null ? ($this->forgeDomains[$forgeId] ?? []) : [];
+                            @endphp
                             <div>
-                                <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                                <p class="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
                                     {{ $group }}
                                 </p>
+                                @if (! empty($domains))
+                                    <div class="mb-2 flex flex-wrap gap-1">
+                                        @foreach ($domains as $domain)
+                                            <x-filament::badge color="gray" size="xs">{{ $domain }}</x-filament::badge>
+                                        @endforeach
+                                    </div>
+                                @endif
                                 <ul class="space-y-1">
                                     @foreach ($items as $file)
                                         <li>

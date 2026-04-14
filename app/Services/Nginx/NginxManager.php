@@ -44,6 +44,34 @@ class NginxManager
         return array_map(fn (string $path): NginxFile => $this->classify($path), $paths);
     }
 
+    /**
+     * @return array<string, list<string>> map of forge site id => [domain, ...]
+     */
+    public function listForgeDomains(Server $server): array
+    {
+        $cmd = "find {$this->nginxRoot}/forge-conf -mindepth 2 -maxdepth 2 -type d -not -name server 2>/dev/null";
+        $result = $this->ssh->run($server, $cmd);
+
+        $lines = array_values(array_filter(
+            array_map('trim', preg_split('/\r?\n/', $result->stdout) ?: []),
+            fn (string $line): bool => $line !== '',
+        ));
+
+        $map = [];
+
+        foreach ($lines as $line) {
+            if (preg_match('#forge-conf/([0-9]+)/([^/]+)$#', $line, $m) === 1) {
+                $map[$m[1]][] = $m[2];
+            }
+        }
+
+        foreach ($map as &$domains) {
+            sort($domains);
+        }
+
+        return $map;
+    }
+
     public function readFile(Server $server, string $path): string
     {
         $this->assertWithinRoot($path);
@@ -141,6 +169,102 @@ class NginxManager
             ok: true,
             status: 'saved',
             output: 'Saved with backup.',
+            backupPath: $backupPath,
+        );
+    }
+
+    public function writeManagedFile(Server $server, string $path, string $content): NginxSaveResult
+    {
+        $this->assertManagedPath($path);
+
+        try {
+            $existed = $this->ssh->fileExists($server, $path);
+        } catch (SshException $e) {
+            return new NginxSaveResult(ok: false, status: 'io_error', output: $e->getMessage());
+        }
+
+        $timestamp = Carbon::now()->format('YmdHis');
+        $stagingPath = '/tmp/redteam-'.Str::random(16).'.tmp';
+        $backupPath = $existed ? $path.'.bak.'.$timestamp : null;
+
+        try {
+            $this->ssh->writeFile($server, $stagingPath, $content);
+        } catch (SshException $e) {
+            return new NginxSaveResult(ok: false, status: 'io_error', output: $e->getMessage());
+        }
+
+        try {
+            if ($existed) {
+                $this->copyFile($server, $path, $backupPath);
+            }
+
+            $this->installFile($server, $stagingPath, $path);
+        } catch (SshException $e) {
+            $this->safeRemoveStaging($server, $stagingPath);
+
+            return new NginxSaveResult(ok: false, status: 'io_error', output: $e->getMessage());
+        }
+
+        $validation = $this->validate($server);
+
+        if (! $validation->ok) {
+            return $this->rollbackManagedWrite($server, $path, $backupPath, $validation->output);
+        }
+
+        $this->pruneBackups($server, $path);
+
+        return new NginxSaveResult(
+            ok: true,
+            status: 'saved',
+            output: $existed ? 'Managed file updated.' : 'Managed file created.',
+            backupPath: $backupPath,
+        );
+    }
+
+    public function deleteManagedFile(Server $server, string $path): NginxSaveResult
+    {
+        $this->assertManagedPath($path);
+
+        try {
+            if (! $this->ssh->fileExists($server, $path)) {
+                return new NginxSaveResult(ok: true, status: 'saved', output: 'Already disabled.');
+            }
+        } catch (SshException $e) {
+            return new NginxSaveResult(ok: false, status: 'io_error', output: $e->getMessage());
+        }
+
+        $backupPath = $path.'.bak.'.Carbon::now()->format('YmdHis');
+
+        try {
+            $this->copyFile($server, $path, $backupPath);
+            $this->removeFileStrict($server, $path);
+        } catch (SshException $e) {
+            return new NginxSaveResult(ok: false, status: 'io_error', output: $e->getMessage());
+        }
+
+        $validation = $this->validate($server);
+
+        if (! $validation->ok) {
+            try {
+                $this->installFile($server, $backupPath, $path);
+            } catch (SshException $e) {
+                return new NginxSaveResult(
+                    ok: false,
+                    status: 'io_error',
+                    output: "nginx -t failed and automatic rollback also failed. Restore manually from {$backupPath}: {$e->getMessage()}",
+                    backupPath: $backupPath,
+                );
+            }
+
+            return new NginxSaveResult(ok: false, status: 'invalid_config', output: $validation->output);
+        }
+
+        $this->pruneBackups($server, $path);
+
+        return new NginxSaveResult(
+            ok: true,
+            status: 'saved',
+            output: 'Managed file removed.',
             backupPath: $backupPath,
         );
     }
@@ -268,6 +392,56 @@ class NginxManager
         }
 
         return new NginxFile($path, 'other', $relative);
+    }
+
+    private function rollbackManagedWrite(Server $server, string $path, ?string $backupPath, string $validationOutput): NginxSaveResult
+    {
+        try {
+            if ($backupPath !== null) {
+                $this->installFile($server, $backupPath, $path);
+            } else {
+                $this->removeFileStrict($server, $path);
+            }
+        } catch (SshException $e) {
+            return new NginxSaveResult(
+                ok: false,
+                status: 'io_error',
+                output: $backupPath !== null
+                    ? "nginx -t failed and automatic rollback also failed. Restore manually from {$backupPath}: {$e->getMessage()}"
+                    : "nginx -t failed and automatic cleanup also failed. Remove {$path} manually: {$e->getMessage()}",
+                backupPath: $backupPath,
+            );
+        }
+
+        return new NginxSaveResult(
+            ok: false,
+            status: 'invalid_config',
+            output: $validationOutput,
+            backupPath: $backupPath,
+        );
+    }
+
+    private function removeFileStrict(Server $server, string $path): void
+    {
+        if ($server->use_sudo) {
+            $this->runSudoOrFail($server, 'rm -f '.escapeshellarg($path), "Failed to remove {$path}");
+
+            return;
+        }
+
+        $this->ssh->deleteFile($server, $path);
+    }
+
+    private function assertManagedPath(string $path): void
+    {
+        $this->assertWithinRoot($path);
+
+        $root = preg_quote($this->nginxRoot, '#');
+        $pattern = '#^'.$root.'/(forge-conf/[0-9]+/server|conf\.d)/redteam-[a-z0-9-]+\.conf$#';
+
+        if (preg_match($pattern, $path) !== 1) {
+            throw new InvalidArgumentException("Managed path must match {$pattern}");
+        }
     }
 
     private function assertWithinRoot(string $path): void
