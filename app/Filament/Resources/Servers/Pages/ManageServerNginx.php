@@ -11,9 +11,11 @@ use App\Services\Nginx\NginxManager;
 use App\Services\Ssh\Exceptions\SshException;
 use BackedEnum;
 use Filament\Actions\Action;
+use Filament\Forms\Components\CodeEditor;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\Concerns\InteractsWithRecord;
 use Filament\Resources\Pages\Page;
+use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use InvalidArgumentException;
 use SebastianBergmann\Diff\Differ;
@@ -183,6 +185,16 @@ class ManageServerNginx extends Page
                 ->danger()
                 ->send(),
         };
+    }
+
+    public function editor(Schema $schema): Schema
+    {
+        return $schema
+            ->components([
+                CodeEditor::make('draftContent')
+                    ->hiddenLabel()
+                    ->live(debounce: 400),
+            ]);
     }
 
     public function getDiffProperty(): string
