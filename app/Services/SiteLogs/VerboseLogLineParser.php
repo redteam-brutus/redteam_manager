@@ -13,7 +13,7 @@ class VerboseLogLineParser
      * Pattern mirrors ForgeSiteSettingsRenderer::VERBOSE_LOG_FORMAT. Unmatched lines return null
      * so the ingester can count skips instead of blowing up the batch.
      */
-    private const LINE_PATTERN = '/^\[(?<ts>[^\]]+)\]\s+Host:\s+(?<host>\S+)\s+\|\s+IP:\s+(?<ip>\S+)\s+\|\s+ReqID:\s+(?<req>\S+)\s+\|\s+Path:\s+(?<path>\S+)\s+\|\s+Request URI:\s+(?<uri>\S+)\s+\|\s+FBCLID:\s+(?<fbclid>\S+)\s+\|\s+UA:\s+"(?<ua>.*)"\s+\|\s+ISO:\s+"(?<iso>[^"]*)"\s+\|\s+Prefetch:\s+\[(?<pre>[^\]]*)\]\s+\|\s+Turbolink:\s+\[(?<turbo>[^\]]*)\]\s+\|\s+client hints:\s+\[(?<ch>.*)\]\s+-\s+\[(?<chp>[^\]]*)\]\s+-\s+\[(?<chm>[^\]]*)\]\s*$/';
+    private const LINE_PATTERN = '/^\[(?<ts>[^\]]+)\]\s+Host:\s+(?<host>\S+)\s+\|\s+IP:\s+(?<ip>\S+)\s+\|\s+ReqID:\s+(?<req>\S+)\s+\|\s+Path:\s+(?<path>\S+)\s+\|\s+Request URI:\s+(?<uri>\S+)\s+\|\s+FBCLID:\s*(?<fbclid>[^|]*?)\s*\|\s+UA:\s+"(?<ua>.*)"\s+\|\s+ISO:\s+"(?<iso>[^"]*)"\s+\|\s+Prefetch:\s+\[(?<pre>[^\]]*)\]\s+\|\s+Turbolink:\s+\[(?<turbo>[^\]]*)\]\s+\|\s+client hints:\s+\[(?<ch>.*)\]\s+-\s+\[(?<chp>[^\]]*)\]\s+-\s+\[(?<chm>[^\]]*)\]\s*$/';
 
     /**
      * @return array<string, mixed>|null matches the columns of site_log_entries, sans id/server/gated.

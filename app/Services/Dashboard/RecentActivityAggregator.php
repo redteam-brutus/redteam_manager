@@ -6,7 +6,7 @@ namespace App\Services\Dashboard;
 
 use App\Models\Server;
 use App\Services\Dashboard\Dto\RecentEdit;
-use App\Services\Nginx\NginxManager;
+use App\Services\Nginx\DomainCache;
 use App\Services\Ssh\Exceptions\SshException;
 use App\Services\Ssh\SshConnectionManager;
 use DateTimeImmutable;
@@ -14,13 +14,21 @@ use Illuminate\Support\Facades\Cache;
 
 class RecentActivityAggregator
 {
-    private const CACHE_KEY = 'dashboard.recent-activity';
+    /**
+     * Per-server cache prefix. We cache the raw `find` output (list of
+     * "<timestamp> <path>" strings) and rebuild the DTOs fresh on every
+     * call. Caching typed DTOs directly would leave stale blobs that
+     * unserialize into __PHP_Incomplete_Class the moment the DTO's shape
+     * evolves — which broke the dashboard after the `domains` field was
+     * added to RecentEdit.
+     */
+    private const SCAN_CACHE_PREFIX = 'dashboard.recent-activity.scan.server-';
 
     private const CACHE_TTL_SECONDS = 30;
 
     public function __construct(
         private readonly SshConnectionManager $ssh,
-        private readonly NginxManager $nginx,
+        private readonly DomainCache $domains,
     ) {}
 
     /**
@@ -28,37 +36,18 @@ class RecentActivityAggregator
      */
     public function latest(int $limit = 10): array
     {
-        return Cache::remember(
-            self::CACHE_KEY.".limit-{$limit}",
-            self::CACHE_TTL_SECONDS,
-            fn (): array => $this->build($limit),
-        );
-    }
-
-    public function forget(): void
-    {
-        Cache::flush();
-    }
-
-    /**
-     * @return list<RecentEdit>
-     */
-    private function build(int $limit): array
-    {
         $edits = [];
 
         foreach (Server::query()->get() as $server) {
-            try {
-                $domains = $this->nginx->listForgeDomains($server);
-            } catch (SshException) {
-                $domains = [];
-            }
+            $domains = $this->domains->for($server);
 
             try {
-                $edits = array_merge($edits, $this->scanServer($server, $domains));
+                $lines = $this->rememberScan($server);
             } catch (SshException) {
-                // server unreachable; skip
+                continue;
             }
+
+            $edits = array_merge($edits, $this->buildEdits($server, $lines, $domains));
         }
 
         usort($edits, fn (RecentEdit $a, RecentEdit $b): int => $b->editedAt->getTimestamp() <=> $a->editedAt->getTimestamp());
@@ -66,20 +55,46 @@ class RecentActivityAggregator
         return array_slice($edits, 0, $limit);
     }
 
+    public function forget(): void
+    {
+        foreach (Server::query()->pluck('id') as $id) {
+            Cache::forget(self::SCAN_CACHE_PREFIX.$id);
+        }
+    }
+
     /**
-     * @param  array<string, list<string>>  $domains
-     * @return list<RecentEdit>
+     * @return list<string>
      */
-    private function scanServer(Server $server, array $domains): array
+    private function rememberScan(Server $server): array
+    {
+        return Cache::remember(
+            self::SCAN_CACHE_PREFIX.$server->id,
+            self::CACHE_TTL_SECONDS,
+            fn (): array => $this->scan($server),
+        );
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function scan(Server $server): array
     {
         $cmd = "find /etc/nginx/conf.d /etc/nginx/forge-conf -type f \\( -name 'redteam-forge-*.conf' -o -path '*/server/redteam-analytics.conf' \\) -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -40";
         $result = $this->ssh->run($server, $cmd);
 
-        $lines = array_values(array_filter(
+        return array_values(array_filter(
             array_map('trim', preg_split('/\r?\n/', $result->stdout) ?: []),
             fn (string $l): bool => $l !== '',
         ));
+    }
 
+    /**
+     * @param  list<string>  $lines
+     * @param  array<string, list<string>>  $domains
+     * @return list<RecentEdit>
+     */
+    private function buildEdits(Server $server, array $lines, array $domains): array
+    {
         $edits = [];
 
         foreach ($lines as $line) {
@@ -94,7 +109,6 @@ class RecentActivityAggregator
             }
 
             [$siteId, $kind] = $parsed;
-
             $siteDomains = $domains[$siteId] ?? [];
 
             $edits[] = new RecentEdit(

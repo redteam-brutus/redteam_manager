@@ -60,3 +60,29 @@ it('preserves the raw line verbatim for re-parse safety', function () {
 
     expect($parsed['raw_line'])->toBe(realLogLine());
 });
+
+it('parses lines where FBCLID is empty (no dash, escape=none format)', function () {
+    // Under escape=none, a missing $arg_fbclid renders as an empty field: "FBCLID: |"
+    $line = '[15/Apr/2026:00:22:51 +0000] Host: test.bestpropfirmsuk.com | IP: 143.244.47.83 | ReqID: 728217ca3a81ea99d124f7398b35be47 | Path: /index.html | Request URI: / | FBCLID: | UA: "Mozilla/5.0" | ISO: "US" | Prefetch: [] | Turbolink: [] | client hints: [] -  [] -  []';
+
+    $parsed = (new VerboseLogLineParser)->parse($line);
+
+    expect($parsed)->not->toBeNull()
+        ->and($parsed['fbclid'])->toBeNull()
+        ->and($parsed['request_id'])->toBe('728217ca3a81ea99d124f7398b35be47')
+        ->and($parsed['iso_country'])->toBe('US');
+});
+
+it('parses lines where Prefetch / Turbolink / client hints arrive as empty brackets', function () {
+    $line = '[15/Apr/2026:00:22:51 +0000] Host: test.bestpropfirmsuk.com | IP: 143.244.47.83 | ReqID: 72fc3eb7ac20984b94b63f3ea89a21a7f75004e1 | Path: /index.html | Request URI: / | FBCLID: - | UA: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/50.0.3029.110 Safari/537.3" | ISO: "US" | Prefetch: [] | Turbolink: [] | client hints: [] -  [] -  []';
+
+    $parsed = (new VerboseLogLineParser)->parse($line);
+
+    expect($parsed)->not->toBeNull()
+        ->and($parsed['prefetch'])->toBeNull()
+        ->and($parsed['turbolink'])->toBeNull()
+        ->and($parsed['sec_ch_ua'])->toBeNull()
+        ->and($parsed['sec_ch_ua_platform'])->toBeNull()
+        ->and($parsed['sec_ch_ua_mobile'])->toBeNull()
+        ->and($parsed['iso_country'])->toBe('US');
+});

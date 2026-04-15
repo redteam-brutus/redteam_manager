@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Filament\Pages\Dashboard;
 use App\Filament\Widgets\RecentActivityWidget;
 use App\Filament\Widgets\TrafficStatsWidget;
 use App\Filament\Widgets\TrafficTableWidget;
@@ -45,6 +46,12 @@ it('TrafficTableWidget renders one row per active site', function () {
         ->assertSeeText('3075741')
         ->assertSeeText('3075742')
         ->assertSeeText('edge-01');
+});
+
+it('Dashboard dispatches site-logs-synced after the Sync now action so widgets auto-refresh', function () {
+    Livewire::test(Dashboard::class)
+        ->callAction('syncNow')
+        ->assertDispatched('site-logs-synced');
 });
 
 it('RecentActivityWidget renders the last edits with kind badges', function () {

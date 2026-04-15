@@ -73,6 +73,25 @@ it('limits the result set to the requested count', function () {
     expect($edits)->toHaveCount(5);
 });
 
+it('caches only raw scan strings, not typed DTOs (so DTO shape changes do not poison the cache)', function () {
+    $server = Server::factory()->create(['host_fingerprint' => 'fingerprint-known']);
+
+    $this->fake->shouldReturnForCommand(
+        '-printf',
+        0,
+        "1760451000 /etc/nginx/conf.d/redteam-forge-3075741.conf\n",
+    );
+    $this->fake->shouldReturnForCommand('-type d -not -name server', 0, '');
+
+    app(RecentActivityAggregator::class)->latest();
+
+    $cached = Cache::get("dashboard.recent-activity.scan.server-{$server->id}");
+
+    expect($cached)->toBeArray()
+        ->and($cached[0] ?? null)->toBeString()
+        ->and($cached[0])->toContain('redteam-forge-3075741.conf');
+});
+
 it('skips unreachable servers rather than failing the whole widget', function () {
     Server::factory()->create(['host_fingerprint' => 'mismatch', 'name' => 'bad']);
     Server::factory()->create(['host_fingerprint' => 'fingerprint-known', 'name' => 'good']);

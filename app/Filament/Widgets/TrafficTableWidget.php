@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Widgets;
 
+use App\Filament\Widgets\Concerns\ListensForSiteLogsSync;
 use App\Services\Dashboard\Dto\SiteTrafficRow;
 use App\Services\Dashboard\SiteTrafficAggregator;
 use Filament\Tables\Columns\TextColumn;
@@ -13,6 +14,8 @@ use Illuminate\Support\Collection;
 
 class TrafficTableWidget extends TableWidget
 {
+    use ListensForSiteLogsSync;
+
     protected static ?int $sort = 2;
 
     protected int|string|array $columnSpan = 'full';

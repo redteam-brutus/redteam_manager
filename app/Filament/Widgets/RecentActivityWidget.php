@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Widgets;
 
+use App\Filament\Widgets\Concerns\ListensForSiteLogsSync;
 use App\Services\Dashboard\Dto\RecentEdit;
 use App\Services\Dashboard\RecentActivityAggregator;
 use Filament\Tables\Columns\TextColumn;
@@ -14,6 +15,8 @@ use Illuminate\Support\Collection;
 
 class RecentActivityWidget extends TableWidget
 {
+    use ListensForSiteLogsSync;
+
     protected static ?int $sort = 3;
 
     protected int|string|array $columnSpan = 'full';
