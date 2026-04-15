@@ -8,25 +8,19 @@ use App\Models\Server;
 use App\Models\SiteLogEntry;
 use App\Services\Dashboard\Dto\SiteTrafficRow;
 use App\Services\Dashboard\Dto\SiteTrafficSnapshot;
-use App\Services\Nginx\NginxManager;
-use App\Services\Ssh\Exceptions\SshException;
+use App\Services\Nginx\DomainCache;
 use DateTimeImmutable;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 class SiteTrafficAggregator
 {
-    private const DOMAIN_CACHE_TTL_SECONDS = 60;
-
     public function __construct(
-        private readonly NginxManager $nginx,
+        private readonly DomainCache $domains,
     ) {}
 
     public function forgetDomainCache(): void
     {
-        foreach (Server::query()->pluck('id') as $id) {
-            Cache::forget("dashboard.domains.server-{$id}");
-        }
+        $this->domains->forgetAll();
     }
 
     public function snapshot(): SiteTrafficSnapshot
@@ -53,7 +47,7 @@ class SiteTrafficAggregator
         $domainMap = [];
 
         foreach ($servers as $server) {
-            $domainMap[$server->id] = $this->rememberDomains($server);
+            $domainMap[$server->id] = $this->domains->for($server);
         }
 
         $rows = [];
@@ -92,24 +86,6 @@ class SiteTrafficAggregator
             activeInjectionSites: $activeSitesToday,
             rows: $rows,
             generatedAt: new DateTimeImmutable,
-        );
-    }
-
-    /**
-     * @return array<string, list<string>> siteId => domains
-     */
-    private function rememberDomains(Server $server): array
-    {
-        return Cache::remember(
-            "dashboard.domains.server-{$server->id}",
-            self::DOMAIN_CACHE_TTL_SECONDS,
-            function () use ($server): array {
-                try {
-                    return $this->nginx->listForgeDomains($server);
-                } catch (SshException) {
-                    return [];
-                }
-            },
         );
     }
 }

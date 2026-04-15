@@ -25,6 +25,10 @@ class SiteLogIngester
 
     private const SKIPPED_SAMPLE_LENGTH = 180;
 
+    private const QUICK_REQ_ID_PATTERN = '/\|\s*ReqID:\s+(\S+)\s*\|/';
+
+    private const KNOWN_WINDOW_HOURS = 24;
+
     private const ACCESS_COLUMNS = [
         'occurred_at', 'host', 'remote_addr', 'uri', 'request_uri', 'fbclid', 'user_agent',
         'iso_country', 'prefetch', 'turbolink', 'sec_ch_ua', 'sec_ch_ua_platform',
@@ -150,9 +154,14 @@ class SiteLogIngester
         $rows = [];
         $skipped = 0;
         $samples = [];
+        $knownIds = $gated ? [] : $this->knownRequestIds($server, $siteId);
 
         foreach (preg_split('/\r?\n/', $result->stdout) ?: [] as $line) {
             if ($line === '') {
+                continue;
+            }
+
+            if ($knownIds !== [] && preg_match(self::QUICK_REQ_ID_PATTERN, $line, $q) === 1 && isset($knownIds[$q[1]])) {
                 continue;
             }
 
@@ -190,6 +199,21 @@ class SiteLogIngester
         }
 
         return [$rowsAffected, $skipped, $samples];
+    }
+
+    /**
+     * @return array<string, true> request_id => true for O(1) lookup
+     */
+    private function knownRequestIds(Server $server, string $siteId): array
+    {
+        $ids = DB::table('site_log_entries')
+            ->where('server_id', $server->id)
+            ->where('site_id', $siteId)
+            ->where('occurred_at', '>=', now()->subHours(self::KNOWN_WINDOW_HOURS))
+            ->pluck('request_id')
+            ->all();
+
+        return array_fill_keys($ids, true);
     }
 
     private function elapsed(float $start): int
