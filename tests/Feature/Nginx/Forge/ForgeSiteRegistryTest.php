@@ -254,6 +254,70 @@ it('renderer emits a site-scoped $has_fbclid helper only when gateHasFbclid is o
         ->and($without->httpContext)->not->toContain('has_fbclid');
 });
 
+it('emits the three-map chain when gateHasFbclid is on and socialRefererHosts is non-empty', function () {
+    $rendered = (new ForgeSiteSettingsRenderer)->render('3075741', new ForgeSiteSettings(
+        analyticsEnabled: true,
+        scriptBody: '<script>x</script>',
+        gateHasFbclid: true,
+        socialRefererHosts: ['facebook.com', 'instagram.com'],
+    ));
+
+    expect($rendered->httpContext)->toContain('map $arg_fbclid $site_3075741_has_fbclid_arg')
+        ->and($rendered->httpContext)->toContain('map $http_referer $site_3075741_has_social_referer')
+        ->and($rendered->httpContext)->toContain('map "$site_3075741_has_fbclid_arg$site_3075741_has_social_referer" $site_3075741_has_fbclid')
+        ->and($rendered->httpContext)->toContain('"~*^https?://([^/]*\.)?facebook\.com(/|$)" 1;')
+        ->and($rendered->httpContext)->toContain('"~*^https?://([^/]*\.)?instagram\.com(/|$)" 1;')
+        ->and($rendered->httpContext)->toContain('"00"    0;');
+});
+
+it('keeps the single-map fbclid form when socialRefererHosts is empty', function () {
+    $rendered = (new ForgeSiteSettingsRenderer)->render('3075741', new ForgeSiteSettings(
+        analyticsEnabled: true,
+        scriptBody: '<script>x</script>',
+        gateHasFbclid: true,
+    ));
+
+    expect($rendered->httpContext)->toContain('map $arg_fbclid $site_3075741_has_fbclid')
+        ->and($rendered->httpContext)->not->toContain('has_fbclid_arg')
+        ->and($rendered->httpContext)->not->toContain('has_social_referer');
+});
+
+it('does not emit a social referer map when gateHasFbclid is off (even if hosts are set)', function () {
+    $rendered = (new ForgeSiteSettingsRenderer)->render('3075741', new ForgeSiteSettings(
+        analyticsEnabled: true,
+        scriptBody: '<script>x</script>',
+        socialRefererHosts: ['facebook.com'],
+    ));
+
+    expect($rendered->httpContext)->not->toContain('has_social_referer')
+        ->and($rendered->httpContext)->not->toContain('has_fbclid_arg');
+});
+
+it('round-trips socialRefererHosts through the parser', function () {
+    $renderer = new ForgeSiteSettingsRenderer;
+    $rendered = $renderer->render('3075741', new ForgeSiteSettings(
+        analyticsEnabled: true,
+        scriptBody: '<script>x</script>',
+        gateHasFbclid: true,
+        socialRefererHosts: ['facebook.com', 'm.facebook.com', 'instagram.com'],
+    ));
+
+    $combined = $rendered->httpContext."\n".$rendered->serverContext;
+    $parsed = (new ForgeSiteSettingsParser)->parse($combined);
+
+    expect($parsed->gateHasFbclid)->toBeTrue()
+        ->and($parsed->socialRefererHosts)->toBe(['facebook.com', 'm.facebook.com', 'instagram.com']);
+});
+
+it('rejects an invalid social referer host containing a pipe', function () {
+    expect(fn () => (new ForgeSiteSettingsRenderer)->render('3075741', new ForgeSiteSettings(
+        analyticsEnabled: true,
+        scriptBody: '<script>x</script>',
+        gateHasFbclid: true,
+        socialRefererHosts: ['facebook.com|instagram.com'],
+    )))->toThrow(InvalidArgumentException::class);
+});
+
 it('renderer emits composite map with colon-joined signals when multiple gates are on', function () {
     $rendered = (new ForgeSiteSettingsRenderer)->render('3075741', new ForgeSiteSettings(
         analyticsEnabled: true,

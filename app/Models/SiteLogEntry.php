@@ -20,6 +20,7 @@ class SiteLogEntry extends Model
     {
         return [
             'gated' => 'boolean',
+            'is_bot' => 'boolean',
             'occurred_at' => 'datetime',
             'imported_at' => 'datetime',
         ];

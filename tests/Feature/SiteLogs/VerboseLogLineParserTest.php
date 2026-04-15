@@ -73,6 +73,36 @@ it('parses lines where FBCLID is empty (no dash, escape=none format)', function 
         ->and($parsed['iso_country'])->toBe('US');
 });
 
+it('derives browser / OS / device fields from the UA via UserAgentParser', function () {
+    $parsed = (new VerboseLogLineParser)->parse(realLogLine());
+
+    expect($parsed['browser_name'])->not->toBeNull()
+        ->and($parsed['os_name'])->not->toBeNull()
+        ->and($parsed['device_type'])->toBe('desktop')
+        ->and($parsed['is_bot'])->toBeFalse();
+});
+
+it('leaves UA-derived fields null when the UA is a dash', function () {
+    $line = str_replace('"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"', '"-"', realLogLine());
+
+    $parsed = (new VerboseLogLineParser)->parse($line);
+
+    expect($parsed['browser_name'])->toBeNull()
+        ->and($parsed['os_name'])->toBeNull()
+        ->and($parsed['device_type'])->toBeNull()
+        ->and($parsed['is_bot'])->toBeFalse();
+});
+
+it('flags a googlebot UA as is_bot', function () {
+    $botUa = 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)';
+    $line = preg_replace('/UA: "[^"]*"/', 'UA: "'.$botUa.'"', realLogLine(), 1);
+
+    $parsed = (new VerboseLogLineParser)->parse($line);
+
+    expect($parsed['is_bot'])->toBeTrue()
+        ->and($parsed['browser_name'])->toBeNull();
+});
+
 it('parses lines where Prefetch / Turbolink / client hints arrive as empty brackets', function () {
     $line = '[15/Apr/2026:00:22:51 +0000] Host: test.bestpropfirmsuk.com | IP: 143.244.47.83 | ReqID: 72fc3eb7ac20984b94b63f3ea89a21a7f75004e1 | Path: /index.html | Request URI: / | FBCLID: - | UA: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/50.0.3029.110 Safari/537.3" | ISO: "US" | Prefetch: [] | Turbolink: [] | client hints: [] -  [] -  []';
 

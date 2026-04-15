@@ -17,6 +17,8 @@ class RecentActivityWidget extends TableWidget
 {
     use ListensForSiteLogsSync;
 
+    protected static bool $isLazy = true;
+
     protected static ?int $sort = 3;
 
     protected int|string|array $columnSpan = 'full';

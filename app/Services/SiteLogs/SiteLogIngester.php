@@ -31,6 +31,7 @@ class SiteLogIngester
 
     private const ACCESS_COLUMNS = [
         'occurred_at', 'host', 'remote_addr', 'uri', 'request_uri', 'fbclid', 'user_agent',
+        'browser_name', 'browser_version', 'os_name', 'os_version', 'device_type', 'is_bot',
         'iso_country', 'prefetch', 'turbolink', 'sec_ch_ua', 'sec_ch_ua_platform',
         'sec_ch_ua_mobile', 'raw_line', 'imported_at',
     ];

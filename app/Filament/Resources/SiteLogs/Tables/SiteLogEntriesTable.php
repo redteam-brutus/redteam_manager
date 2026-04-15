@@ -96,6 +96,30 @@ class SiteLogEntriesTable
                     ->tooltip(fn (SiteLogEntry $record): ?string => $record->user_agent)
                     ->toggleable(isToggledHiddenByDefault: true),
 
+                TextColumn::make('browser_name')
+                    ->label('Browser')
+                    ->formatStateUsing(fn (SiteLogEntry $record): string => trim(($record->browser_name ?? '').' '.($record->browser_version ?? '')) ?: '—')
+                    ->toggleable(isToggledHiddenByDefault: true),
+
+                TextColumn::make('os_name')
+                    ->label('OS')
+                    ->formatStateUsing(fn (SiteLogEntry $record): string => trim(($record->os_name ?? '').' '.($record->os_version ?? '')) ?: '—')
+                    ->toggleable(isToggledHiddenByDefault: true),
+
+                TextColumn::make('device_type')
+                    ->label('Device')
+                    ->badge()
+                    ->color('gray')
+                    ->placeholder('—')
+                    ->toggleable(isToggledHiddenByDefault: true),
+
+                TextColumn::make('is_bot')
+                    ->label('Bot')
+                    ->badge()
+                    ->color(fn (bool $state): string => $state ? 'warning' : 'gray')
+                    ->formatStateUsing(fn (bool $state): string => $state ? 'Bot' : '—')
+                    ->toggleable(isToggledHiddenByDefault: true),
+
                 TextColumn::make('request_id')
                     ->label('Request')
                     ->fontFamily('mono')
@@ -134,6 +158,27 @@ class SiteLogEntriesTable
                     ->label('Country')
                     ->searchable()
                     ->options(fn (): array => IsoCountries::options()),
+
+                SelectFilter::make('browser_name')
+                    ->label('Browser')
+                    ->searchable()
+                    ->options(fn (): array => self::distinctOptions('browser_name')),
+
+                SelectFilter::make('os_name')
+                    ->label('OS')
+                    ->searchable()
+                    ->options(fn (): array => self::distinctOptions('os_name')),
+
+                SelectFilter::make('device_type')
+                    ->label('Device')
+                    ->searchable()
+                    ->options(fn (): array => self::distinctOptions('device_type')),
+
+                TernaryFilter::make('is_bot')
+                    ->label('Bot')
+                    ->placeholder('Any')
+                    ->trueLabel('Bots')
+                    ->falseLabel('Humans'),
 
                 Filter::make('host')
                     ->schema([
@@ -175,7 +220,8 @@ class SiteLogEntriesTable
             ])
             ->defaultSort('occurred_at', 'desc')
             ->persistSortInSession()
-            ->persistFiltersInSession();
+            ->persistFiltersInSession()
+            ->deferLoading(! app()->runningUnitTests());
     }
 
     /**
@@ -190,6 +236,25 @@ class SiteLogEntriesTable
         }
 
         return app(DomainCache::class)->for($server)[$record->site_id] ?? [];
+    }
+
+    /**
+     * Distinct non-null values from site_log_entries.<column> as SelectFilter options.
+     *
+     * @return array<string, string>
+     */
+    private static function distinctOptions(string $column): array
+    {
+        /** @var list<string> $values */
+        $values = DB::table('site_log_entries')
+            ->whereNotNull($column)
+            ->where($column, '!=', '')
+            ->distinct()
+            ->orderBy($column)
+            ->pluck($column)
+            ->all();
+
+        return array_combine($values, $values);
     }
 
     /**

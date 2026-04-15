@@ -83,6 +83,27 @@ it('still promotes gated=true on the gate pass even when the request_id is alrea
     expect(SiteLogEntry::query()->where('request_id', 'req-a')->value('gated'))->toBeTrue();
 });
 
+it('populates browser / OS / device / is_bot on ingest', function () {
+    $accessPath = '/var/log/nginx/site-3075741-access.log';
+    $chromeLine = '[14/Apr/2026:17:44:07 +0000] Host: example.com | IP: 1.2.3.4 | ReqID: req-chrome | Path: / | Request URI: / | FBCLID: - | UA: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" | ISO: "US" | Prefetch: [document] | Turbolink: [-] | client hints: [] -  [] -  []';
+    $botLine = '[14/Apr/2026:17:44:08 +0000] Host: example.com | IP: 1.2.3.5 | ReqID: req-bot | Path: / | Request URI: / | FBCLID: - | UA: "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)" | ISO: "US" | Prefetch: [] | Turbolink: [] | client hints: [] -  [] -  []';
+
+    $this->fake->shouldReturn(0, $accessPath."\n");
+    $this->fake->shouldReturnForCommand($accessPath, 0, $chromeLine."\n".$botLine."\n");
+
+    $this->ingester->ingestServer(aDedupServer());
+
+    $chrome = SiteLogEntry::query()->where('request_id', 'req-chrome')->firstOrFail();
+    $bot = SiteLogEntry::query()->where('request_id', 'req-bot')->firstOrFail();
+
+    expect($chrome->browser_name)->toBe('Chrome')
+        ->and($chrome->os_name)->toBe('Mac')
+        ->and($chrome->device_type)->toBe('desktop')
+        ->and($chrome->is_bot)->toBeFalse()
+        ->and($bot->is_bot)->toBeTrue()
+        ->and($bot->browser_name)->toBeNull();
+});
+
 it('does not skip lines older than the 24h dedup window', function () {
     $accessPath = '/var/log/nginx/site-3075741-access.log';
     $this->fake->shouldReturn(0, $accessPath."\n");

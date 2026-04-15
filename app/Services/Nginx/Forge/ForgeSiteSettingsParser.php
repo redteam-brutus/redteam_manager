@@ -27,6 +27,7 @@ class ForgeSiteSettingsParser
         $gated = $this->extractGatedAnalytics($content);
         $targetCountries = $this->extractTargetCountries($content);
         $targetPages = $this->extractTargetPages($content);
+        $socialRefererHosts = $this->extractSocialRefererHosts($content);
 
         if ($gated !== null) {
             return new ForgeSiteSettings(
@@ -40,6 +41,7 @@ class ForgeSiteSettingsParser
                 gateIsTargetPage: $gated['gates']['gateIsTargetPage'] ?? false,
                 targetCountries: $targetCountries,
                 targetPages: $targetPages,
+                socialRefererHosts: $socialRefererHosts,
             );
         }
 
@@ -50,6 +52,7 @@ class ForgeSiteSettingsParser
             siteLoggingEnabled: $this->hasSiteLogging($content),
             targetCountries: $targetCountries,
             targetPages: $targetPages,
+            socialRefererHosts: $socialRefererHosts,
         );
     }
 
@@ -213,6 +216,27 @@ class ForgeSiteSettingsParser
         }
 
         return $m[1] ?? [];
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function extractSocialRefererHosts(string $content): array
+    {
+        $body = $this->extractSiteMapBody($content, '$http_referer', 'has_social_referer');
+
+        if ($body === null) {
+            return [];
+        }
+
+        if (preg_match_all('/"~\*\^https\?:\/\/\(\[\^\/\]\*\\\\\.\)\?(.+?)\(\/\|\$\)"\s+1\s*;/', $body, $m) === false) {
+            return [];
+        }
+
+        return array_map(
+            fn (string $host): string => str_replace('\\.', '.', $host),
+            $m[1] ?? [],
+        );
     }
 
     private function extractSiteMapBody(string $content, string $source, string $suffix): ?string

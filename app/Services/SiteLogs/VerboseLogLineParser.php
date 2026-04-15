@@ -15,6 +15,10 @@ class VerboseLogLineParser
      */
     private const LINE_PATTERN = '/^\[(?<ts>[^\]]+)\]\s+Host:\s+(?<host>\S+)\s+\|\s+IP:\s+(?<ip>\S+)\s+\|\s+ReqID:\s+(?<req>\S+)\s+\|\s+Path:\s+(?<path>\S+)\s+\|\s+Request URI:\s+(?<uri>\S+)\s+\|\s+FBCLID:\s*(?<fbclid>[^|]*?)\s*\|\s+UA:\s+"(?<ua>.*)"\s+\|\s+ISO:\s+"(?<iso>[^"]*)"\s+\|\s+Prefetch:\s+\[(?<pre>[^\]]*)\]\s+\|\s+Turbolink:\s+\[(?<turbo>[^\]]*)\]\s+\|\s+client hints:\s+\[(?<ch>.*)\]\s+-\s+\[(?<chp>[^\]]*)\]\s+-\s+\[(?<chm>[^\]]*)\]\s*$/';
 
+    public function __construct(
+        private readonly UserAgentParser $uaParser = new UserAgentParser,
+    ) {}
+
     /**
      * @return array<string, mixed>|null matches the columns of site_log_entries, sans id/server/gated.
      */
@@ -40,6 +44,9 @@ class VerboseLogLineParser
             return null;
         }
 
+        $userAgent = self::nullIfDash($m['ua']);
+        $uaFields = $this->uaParser->parse($userAgent);
+
         return [
             'occurred_at' => $occurredAt,
             'request_id' => $m['req'],
@@ -48,7 +55,13 @@ class VerboseLogLineParser
             'uri' => self::nullIfDash($m['path']),
             'request_uri' => self::nullIfDash($m['uri']),
             'fbclid' => self::nullIfDash($m['fbclid']),
-            'user_agent' => self::nullIfDash($m['ua']),
+            'user_agent' => $userAgent,
+            'browser_name' => $uaFields['browser_name'],
+            'browser_version' => $uaFields['browser_version'],
+            'os_name' => $uaFields['os_name'],
+            'os_version' => $uaFields['os_version'],
+            'device_type' => $uaFields['device_type'],
+            'is_bot' => $uaFields['is_bot'],
             'iso_country' => self::isoOrNull($m['iso']),
             'prefetch' => self::nullIfDash($m['pre']),
             'turbolink' => self::nullIfDash($m['turbo']),

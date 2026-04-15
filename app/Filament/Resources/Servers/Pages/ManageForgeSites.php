@@ -17,6 +17,7 @@ use BackedEnum;
 use Filament\Actions\Action;
 use Filament\Forms\Components\Repeater;
 use Filament\Forms\Components\Select;
+use Filament\Forms\Components\TagsInput;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
@@ -24,6 +25,7 @@ use Filament\Notifications\Notification;
 use Filament\Resources\Pages\Concerns\InteractsWithRecord;
 use Filament\Resources\Pages\Page;
 use Filament\Schemas\Components\Section;
+use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use InvalidArgumentException;
@@ -124,6 +126,12 @@ class ManageForgeSites extends Page
             return;
         }
 
+        $socialRefererHosts = $site->settings->socialRefererHosts;
+
+        if (! $site->hasManaged && $socialRefererHosts === []) {
+            $socialRefererHosts = ForgeSiteSettings::DEFAULT_SOCIAL_REFERER_HOSTS;
+        }
+
         $this->selectedSiteId = $siteId;
         $this->hasManaged = $site->hasManaged;
         $this->data = [
@@ -137,6 +145,7 @@ class ManageForgeSites extends Page
             'gateIsTargetPage' => $site->settings->gateIsTargetPage,
             'targetCountries' => $site->settings->targetCountries,
             'targetPages' => array_map(fn (string $p): array => ['pattern' => $p], $site->settings->targetPages),
+            'socialRefererHosts' => $socialRefererHosts,
         ];
 
         $this->refreshPreview();
@@ -181,8 +190,14 @@ class ManageForgeSites extends Page
                             ->helperText('Requires anti-bot conf (provides $is_bot).')
                             ->live(debounce: 400),
                         Toggle::make('gateHasFbclid')
-                            ->label('Only when ?fbclid is present')
-                            ->helperText('Emits a site-scoped $has_fbclid helper.')
+                            ->label('Only entry-proof traffic (fbclid or social referer)')
+                            ->helperText('Empty host list below: fbclid-only. Non-empty: fbclid OR matching referer.')
+                            ->live(debounce: 400),
+                        TagsInput::make('socialRefererHosts')
+                            ->label('Social referer hosts (OR with fbclid)')
+                            ->placeholder('facebook.com')
+                            ->helperText('When set, injection fires for ?fbclid= OR requests whose Referer matches one of these hosts. Leave empty to keep the gate as fbclid-only.')
+                            ->visible(fn (Get $get): bool => (bool) $get('gateHasFbclid'))
                             ->live(debounce: 400),
                         Toggle::make('gateIsTargetCountry')
                             ->label('Only target countries')
@@ -289,6 +304,7 @@ class ManageForgeSites extends Page
                 'gateIsTargetPage' => false,
                 'targetCountries' => [],
                 'targetPages' => [],
+                'socialRefererHosts' => [],
             ];
             $this->refreshPreview();
             $this->loadSites();
@@ -418,6 +434,11 @@ class ManageForgeSites extends Page
             fn (string $p): bool => $p !== '',
         ));
 
+        $socialHosts = array_values(array_filter(
+            array_map('strval', (array) ($data['socialRefererHosts'] ?? [])),
+            fn (string $h): bool => $h !== '',
+        ));
+
         return new ForgeSiteSettings(
             analyticsEnabled: (bool) ($data['analyticsEnabled'] ?? false),
             trackingTag: (string) ($data['trackingTag'] ?? '</head>'),
@@ -429,6 +450,7 @@ class ManageForgeSites extends Page
             gateIsTargetPage: (bool) ($data['gateIsTargetPage'] ?? false),
             targetCountries: array_values(array_map('strval', (array) ($data['targetCountries'] ?? []))),
             targetPages: $pages,
+            socialRefererHosts: $socialHosts,
         );
     }
 

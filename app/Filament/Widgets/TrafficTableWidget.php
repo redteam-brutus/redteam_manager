@@ -16,6 +16,8 @@ class TrafficTableWidget extends TableWidget
 {
     use ListensForSiteLogsSync;
 
+    protected static bool $isLazy = true;
+
     protected static ?int $sort = 2;
 
     protected int|string|array $columnSpan = 'full';

@@ -156,6 +156,50 @@ it('renders domain tags on rows (when the Domains column is toggled on) via the 
         ->assertSeeText('test.bestpropfirmsuk.com');
 });
 
+it('narrows rows when filtering by browser_name', function () {
+    $server = Server::factory()->create();
+    $chrome = SiteLogEntry::factory()->for($server)->count(2)->today()->create(['browser_name' => 'Chrome']);
+    $safari = SiteLogEntry::factory()->for($server)->count(3)->today()->create(['browser_name' => 'Safari']);
+
+    Livewire::test(ListSiteLogEntries::class)
+        ->filterTable('browser_name', 'Chrome')
+        ->assertCanSeeTableRecords($chrome)
+        ->assertCanNotSeeTableRecords($safari);
+});
+
+it('narrows rows when filtering by os_name', function () {
+    $server = Server::factory()->create();
+    $mac = SiteLogEntry::factory()->for($server)->count(2)->today()->create(['os_name' => 'Mac']);
+    $win = SiteLogEntry::factory()->for($server)->count(3)->today()->create(['os_name' => 'Windows']);
+
+    Livewire::test(ListSiteLogEntries::class)
+        ->filterTable('os_name', 'Mac')
+        ->assertCanSeeTableRecords($mac)
+        ->assertCanNotSeeTableRecords($win);
+});
+
+it('narrows rows when filtering by device_type', function () {
+    $server = Server::factory()->create();
+    $desktops = SiteLogEntry::factory()->for($server)->count(2)->today()->create(['device_type' => 'desktop']);
+    $phones = SiteLogEntry::factory()->for($server)->count(3)->today()->create(['device_type' => 'smartphone']);
+
+    Livewire::test(ListSiteLogEntries::class)
+        ->filterTable('device_type', 'desktop')
+        ->assertCanSeeTableRecords($desktops)
+        ->assertCanNotSeeTableRecords($phones);
+});
+
+it('narrows rows when filtering by is_bot=true', function () {
+    $server = Server::factory()->create();
+    $bots = SiteLogEntry::factory()->for($server)->count(2)->today()->create(['is_bot' => true]);
+    $humans = SiteLogEntry::factory()->for($server)->count(3)->today()->create(['is_bot' => false]);
+
+    Livewire::test(ListSiteLogEntries::class)
+        ->filterTable('is_bot', true)
+        ->assertCanSeeTableRecords($bots)
+        ->assertCanNotSeeTableRecords($humans);
+});
+
 it('hides secondary columns by default so the default view is just When + Server', function () {
     $server = Server::factory()->create();
     SiteLogEntry::factory()->for($server)->today()->create(['site_id' => '1111', 'host' => 'secret-host.example']);

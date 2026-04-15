@@ -14,6 +14,8 @@ class TrafficStatsWidget extends StatsOverviewWidget
 {
     use ListensForSiteLogsSync;
 
+    protected static bool $isLazy = true;
+
     protected static ?int $sort = 1;
 
     protected ?string $pollingInterval = '30s';

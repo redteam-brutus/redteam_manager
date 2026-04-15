@@ -51,6 +51,10 @@ class ForgeSiteSettingsRenderer
             $this->assertTargetPage($body);
         }
 
+        foreach ($settings->socialRefererHosts as $host) {
+            $this->assertSocialRefererHost($host);
+        }
+
         $enabled = $this->enabledSignals($settings);
         $scriptVar = "site_{$siteId}_analytics_script";
         $gateHitVar = "site_{$siteId}_gate_hit";
@@ -79,12 +83,47 @@ class ForgeSiteSettingsRenderer
         // Gate variable definitions (shared by gated analytics + gate_hit logging).
         if ($enabled !== []) {
             if ($settings->gateHasFbclid) {
-                $httpParts[] = "# --- \${$hasFbclidVar} helper ---";
-                $httpParts[] = "map \$arg_fbclid \${$hasFbclidVar} {";
-                $httpParts[] = '    default 1;';
-                $httpParts[] = '    ""      0;';
-                $httpParts[] = '}';
-                $httpParts[] = '';
+                if ($settings->socialRefererHosts === []) {
+                    $httpParts[] = "# --- \${$hasFbclidVar} helper ---";
+                    $httpParts[] = "map \$arg_fbclid \${$hasFbclidVar} {";
+                    $httpParts[] = '    default 1;';
+                    $httpParts[] = '    ""      0;';
+                    $httpParts[] = '}';
+                    $httpParts[] = '';
+                } else {
+                    $hasFbclidArgVar = "site_{$siteId}_has_fbclid_arg";
+                    $hasSocialRefererVar = "site_{$siteId}_has_social_referer";
+
+                    $httpParts[] = "# --- \${$hasFbclidVar} = fbclid OR social referer ---";
+                    $httpParts[] = "map \$arg_fbclid \${$hasFbclidArgVar} {";
+                    $httpParts[] = '    default 1;';
+                    $httpParts[] = '    ""      0;';
+                    $httpParts[] = '}';
+                    $httpParts[] = '';
+                    $httpParts[] = "map \$http_referer \${$hasSocialRefererVar} {";
+                    $httpParts[] = '    default 0;';
+
+                    foreach ($settings->socialRefererHosts as $host) {
+                        $httpParts[] = sprintf(
+                            '    "~*^https?://([^/]*\.)?%s(/|$)" 1;',
+                            preg_quote($host, '/'),
+                        );
+                    }
+
+                    $httpParts[] = '}';
+                    $httpParts[] = '';
+                    $httpParts[] = sprintf(
+                        'map "$%s$%s" $%s {',
+                        $hasFbclidArgVar,
+                        $hasSocialRefererVar,
+                        $hasFbclidVar,
+                    );
+                    $httpParts[] = '    default 1;';
+                    $httpParts[] = '    "00"    0;';
+                    $httpParts[] = '}';
+                    $httpParts[] = '';
+                }
+
                 $httpHasContent = true;
             }
 
@@ -295,6 +334,17 @@ class ForgeSiteSettingsRenderer
 
         if (preg_match('/^(?:\\\\.|[^"\n\r])+$/D', $body) !== 1) {
             throw new InvalidArgumentException("Target page body contains unescaped quote or newline: {$body}");
+        }
+    }
+
+    private function assertSocialRefererHost(string $host): void
+    {
+        if ($host === '') {
+            throw new InvalidArgumentException('Social referer host cannot be empty.');
+        }
+
+        if (preg_match('/[\s|()"\'~\\\\\r\n]/', $host) === 1) {
+            throw new InvalidArgumentException("Social referer host contains forbidden character: {$host}");
         }
     }
 }
