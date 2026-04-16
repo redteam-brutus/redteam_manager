@@ -24,6 +24,8 @@ class ServerFactory extends Factory
             'host' => fake()->ipv4(),
             'port' => 22,
             'ssh_user' => fake()->randomElement(['root', 'ubuntu', 'deploy']),
+            'use_sudo' => false,
+            'sudo_password' => null,
             'ssh_key_id' => SshKey::factory(),
             'host_fingerprint' => null,
             'last_connected_at' => null,
@@ -40,6 +42,14 @@ class ServerFactory extends Factory
             'last_connected_at' => now(),
             'last_connection_status' => ConnectionStatus::Success,
             'metadata' => ['whoami' => 'root', 'uname' => 'Linux'],
+        ]);
+    }
+
+    public function withSudo(string $password = 'secret'): static
+    {
+        return $this->state([
+            'use_sudo' => true,
+            'sudo_password' => $password,
         ]);
     }
 }

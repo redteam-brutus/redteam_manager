@@ -20,6 +20,8 @@ class Server extends Model
         'host',
         'port',
         'ssh_user',
+        'use_sudo',
+        'sudo_password',
         'ssh_key_id',
         'host_fingerprint',
         'last_connected_at',
@@ -28,10 +30,16 @@ class Server extends Model
         'metadata',
     ];
 
+    protected $hidden = [
+        'sudo_password',
+    ];
+
     protected function casts(): array
     {
         return [
             'port' => 'integer',
+            'use_sudo' => 'boolean',
+            'sudo_password' => 'encrypted',
             'last_connected_at' => 'datetime',
             'last_connection_status' => ConnectionStatus::class,
             'metadata' => 'array',
