@@ -30,16 +30,22 @@ class SiteTrafficAggregator
         $query = SiteLogEntry::query()->where('occurred_at', '>=', $since);
 
         $totalVisits = (int) (clone $query)->count();
-        $totalGateHits = (int) (clone $query)->where('gated', true)->count();
+        $totalGateHits = (int) (clone $query)
+            ->whereHas('logMatches', fn ($q) => $q->where('log_slug', 'gate'))
+            ->count();
         $totalFbclidHits = (int) (clone $query)->whereNotNull('fbclid')->count();
 
-        $perSite = DB::table('site_log_entries')
-            ->select('server_id', 'site_id')
+        $perSite = DB::table('site_log_entries as sle')
+            ->leftJoin('site_log_entry_log_matches as m', function ($join): void {
+                $join->on('m.site_log_entry_id', '=', 'sle.id')
+                    ->where('m.log_slug', '=', 'gate');
+            })
+            ->select('sle.server_id', 'sle.site_id')
             ->selectRaw('COUNT(*) AS visits')
-            ->selectRaw('COUNT(*) FILTER (WHERE gated) AS gate_hits')
-            ->selectRaw('COUNT(*) FILTER (WHERE fbclid IS NOT NULL) AS fbclid_hits')
-            ->where('occurred_at', '>=', $since)
-            ->groupBy('server_id', 'site_id')
+            ->selectRaw('COUNT(m.id) AS gate_hits')
+            ->selectRaw('COUNT(*) FILTER (WHERE sle.fbclid IS NOT NULL) AS fbclid_hits')
+            ->where('sle.occurred_at', '>=', $since)
+            ->groupBy('sle.server_id', 'sle.site_id')
             ->get()
             ->keyBy(fn ($r): string => $r->server_id.':'.$r->site_id);
 

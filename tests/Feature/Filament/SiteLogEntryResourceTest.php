@@ -52,15 +52,26 @@ it('narrows rows when filtering by site_id', function () {
         ->assertCanNotSeeTableRecords($b);
 });
 
-it('narrows rows when filtering by gated=true', function () {
+it('narrows rows when filtering by log_slug=gate', function () {
     $server = Server::factory()->create();
     $gated = SiteLogEntry::factory()->for($server)->count(2)->today()->gated()->create();
     $plain = SiteLogEntry::factory()->for($server)->count(3)->today()->create();
 
     Livewire::test(ListSiteLogEntries::class)
-        ->filterTable('gated', true)
+        ->filterTable('log_slug', 'gate')
         ->assertCanSeeTableRecords($gated)
         ->assertCanNotSeeTableRecords($plain);
+});
+
+it('narrows rows when filtering by a custom log_slug', function () {
+    $server = Server::factory()->create();
+    $matched = SiteLogEntry::factory()->for($server)->count(2)->today()->withMatches(['fb_us'])->create();
+    $other = SiteLogEntry::factory()->for($server)->count(3)->today()->withMatches(['gate'])->create();
+
+    Livewire::test(ListSiteLogEntries::class)
+        ->filterTable('log_slug', 'fb_us')
+        ->assertCanSeeTableRecords($matched)
+        ->assertCanNotSeeTableRecords($other);
 });
 
 it('narrows rows when filtering by fbclid presence', function () {

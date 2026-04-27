@@ -6,6 +6,7 @@ namespace Database\Factories;
 
 use App\Models\Server;
 use App\Models\SiteLogEntry;
+use App\Models\SiteLogEntryLogMatch;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Support\Str;
 
@@ -26,7 +27,6 @@ class SiteLogEntryFactory extends Factory
             'site_id' => (string) fake()->numberBetween(3000000, 3999999),
             'request_id' => Str::random(32),
             'occurred_at' => $occurredAt,
-            'gated' => false,
             'host' => fake()->domainName(),
             'remote_addr' => fake()->ipv4(),
             'uri' => '/'.fake()->slug(),
@@ -49,9 +49,29 @@ class SiteLogEntryFactory extends Factory
         return $this->state(['occurred_at' => now()->setTime(fake()->numberBetween(0, 23), fake()->numberBetween(0, 59))]);
     }
 
+    /**
+     * Attach `log_slug` matches after the entry is created.
+     *
+     * @param  list<string>  $slugs
+     */
+    public function withMatches(array $slugs): static
+    {
+        return $this->afterCreating(function (SiteLogEntry $entry) use ($slugs): void {
+            foreach ($slugs as $slug) {
+                SiteLogEntryLogMatch::query()->updateOrCreate([
+                    'site_log_entry_id' => $entry->id,
+                    'log_slug' => $slug,
+                ]);
+            }
+        });
+    }
+
+    /**
+     * Convenience: attach `gate` slug match (legacy `->gated()` replacement).
+     */
     public function gated(): static
     {
-        return $this->state(['gated' => true]);
+        return $this->withMatches(['gate']);
     }
 
     public function withFbclid(): static

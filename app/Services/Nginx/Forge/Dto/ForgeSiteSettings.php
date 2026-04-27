@@ -19,6 +19,7 @@ final readonly class ForgeSiteSettings
      * @param  list<string>  $targetCountries  2-letter uppercase CF country codes, e.g. ['IL', 'EG'].
      * @param  list<string>  $targetPages  URI regex bodies (without the ~* prefix), e.g. ['^/page-1/'].
      * @param  list<string>  $socialRefererHosts  Hosts that count as entry-proof referers (OR with fbclid).
+     * @param  list<ForgeSiteCustomLog>  $customLogs  User-defined per-site log streams (slug → conditions).
      */
     public function __construct(
         public bool $analyticsEnabled = false,
@@ -32,6 +33,7 @@ final readonly class ForgeSiteSettings
         public array $targetCountries = [],
         public array $targetPages = [],
         public array $socialRefererHosts = [],
+        public array $customLogs = [],
     ) {}
 
     public function hasAnyGate(): bool

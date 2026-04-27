@@ -7,6 +7,7 @@ namespace App\Filament\Resources\Servers\Pages;
 use App\Filament\Resources\Servers\ServerResource;
 use App\Models\Server;
 use App\Services\Nginx\Dto\NginxSaveResult;
+use App\Services\Nginx\Forge\Dto\ForgeSiteCustomLog;
 use App\Services\Nginx\Forge\Dto\ForgeSiteSettings;
 use App\Services\Nginx\Forge\ForgeSiteRegistry;
 use App\Services\Nginx\Forge\ForgeSiteSettingsRenderer;
@@ -146,6 +147,23 @@ class ManageForgeSites extends Page
             'targetCountries' => $site->settings->targetCountries,
             'targetPages' => array_map(fn (string $p): array => ['pattern' => $p], $site->settings->targetPages),
             'socialRefererHosts' => $socialRefererHosts,
+            'customLogs' => array_map(
+                fn (ForgeSiteCustomLog $log): array => [
+                    'slug' => $log->slug,
+                    'label' => $log->label,
+                    'requireNotBot' => $log->requireNotBot,
+                    'requireFbclid' => $log->requireFbclid,
+                    'requireSocialReferer' => $log->requireSocialReferer,
+                    'requireTargetCountry' => $log->requireTargetCountry,
+                    'requireTargetPage' => $log->requireTargetPage,
+                    'overrideCountries' => $log->overrideCountries ?? [],
+                    'overridePages' => $log->overridePages !== null
+                        ? array_map(fn (string $p): array => ['pattern' => $p], $log->overridePages)
+                        : [],
+                    'overrideSocialRefererHosts' => $log->overrideSocialRefererHosts ?? [],
+                ],
+                $site->settings->customLogs,
+            ),
         ];
 
         $this->refreshPreview();
@@ -239,6 +257,76 @@ class ManageForgeSites extends Page
                                 : 'Writes /var/log/nginx/site-<id>-access.log (all traffic) and /var/log/nginx/site-<id>-gate.log (matched gates).')
                             ->live(debounce: 400),
                     ]),
+                Section::make('Custom logs')
+                    ->description('User-defined per-site log streams. Each writes /var/log/nginx/site-<id>-<slug>.log gated by the chosen request signals. Reserved slugs: access, gate.')
+                    ->visible(fn (Get $get): bool => (bool) $get('siteLoggingEnabled'))
+                    ->schema([
+                        Repeater::make('customLogs')
+                            ->label('Logs')
+                            ->addActionLabel('Add a custom log')
+                            ->reorderable(false)
+                            ->default([])
+                            ->live(debounce: 400)
+                            ->schema([
+                                TextInput::make('slug')
+                                    ->required()
+                                    ->placeholder('fb_us_offer')
+                                    ->helperText('snake_case, 1-32 chars, starts with a letter. Reserved: access, gate.')
+                                    ->rules([
+                                        'regex:'.ForgeSiteCustomLog::SLUG_PATTERN,
+                                        'not_in:'.implode(',', ForgeSiteCustomLog::RESERVED_SLUGS),
+                                    ])
+                                    ->distinct()
+                                    ->live(debounce: 400),
+                                TextInput::make('label')
+                                    ->required()
+                                    ->placeholder('Facebook → US → /offer/')
+                                    ->live(debounce: 400),
+                                Toggle::make('requireNotBot')
+                                    ->label('Require not bot')
+                                    ->helperText('Requires anti-bot conf (provides $is_bot).')
+                                    ->live(debounce: 400),
+                                Toggle::make('requireFbclid')
+                                    ->label('Require fbclid')
+                                    ->live(debounce: 400),
+                                Toggle::make('requireSocialReferer')
+                                    ->label('Require social referer')
+                                    ->helperText('Combined with Require fbclid: matches fbclid OR a configured social referer host.')
+                                    ->live(debounce: 400),
+                                Toggle::make('requireTargetCountry')
+                                    ->label('Require target country')
+                                    ->live(debounce: 400),
+                                Toggle::make('requireTargetPage')
+                                    ->label('Require target page')
+                                    ->live(debounce: 400),
+                                TagsInput::make('overrideCountries')
+                                    ->label('Override countries')
+                                    ->placeholder('US')
+                                    ->helperText('Leave override blank to inherit site-level lists. Cloudflare 2-letter country codes.')
+                                    ->visible(fn (Get $get): bool => (bool) $get('requireTargetCountry'))
+                                    ->live(debounce: 400),
+                                Repeater::make('overridePages')
+                                    ->label('Override target pages')
+                                    ->simple(
+                                        TextInput::make('pattern')
+                                            ->required()
+                                            ->placeholder('^/offer/'),
+                                    )
+                                    ->addActionLabel('Add a target page')
+                                    ->reorderable(false)
+                                    ->default([])
+                                    ->helperText('Leave override blank to inherit site-level lists.')
+                                    ->visible(fn (Get $get): bool => (bool) $get('requireTargetPage'))
+                                    ->live(debounce: 400),
+                                TagsInput::make('overrideSocialRefererHosts')
+                                    ->label('Override social referer hosts')
+                                    ->placeholder('facebook.com')
+                                    ->helperText('Leave override blank to inherit site-level lists.')
+                                    ->visible(fn (Get $get): bool => (bool) $get('requireFbclid') && (bool) $get('requireSocialReferer'))
+                                    ->live(debounce: 400),
+                            ])
+                            ->itemLabel(fn (array $state): ?string => ($state['label'] ?? null) ?: ($state['slug'] ?? null)),
+                    ]),
             ]);
     }
 
@@ -305,6 +393,7 @@ class ManageForgeSites extends Page
                 'targetCountries' => [],
                 'targetPages' => [],
                 'socialRefererHosts' => [],
+                'customLogs' => [],
             ];
             $this->refreshPreview();
             $this->loadSites();
@@ -451,7 +540,80 @@ class ManageForgeSites extends Page
             targetCountries: array_values(array_map('strval', (array) ($data['targetCountries'] ?? []))),
             targetPages: $pages,
             socialRefererHosts: $socialHosts,
+            customLogs: $this->customLogsFromData((array) ($data['customLogs'] ?? [])),
         );
+    }
+
+    /**
+     * @param  array<int, mixed>  $rows
+     * @return list<ForgeSiteCustomLog>
+     */
+    private function customLogsFromData(array $rows): array
+    {
+        $logs = [];
+
+        foreach ($rows as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+
+            $slug = (string) ($row['slug'] ?? '');
+
+            if ($slug === '' || in_array($slug, ForgeSiteCustomLog::RESERVED_SLUGS, true)) {
+                continue;
+            }
+
+            if (preg_match(ForgeSiteCustomLog::SLUG_PATTERN, $slug) !== 1) {
+                continue;
+            }
+
+            $logs[] = new ForgeSiteCustomLog(
+                slug: $slug,
+                label: (string) ($row['label'] ?? $slug),
+                requireNotBot: (bool) ($row['requireNotBot'] ?? false),
+                requireFbclid: (bool) ($row['requireFbclid'] ?? false),
+                requireSocialReferer: (bool) ($row['requireSocialReferer'] ?? false),
+                requireTargetCountry: (bool) ($row['requireTargetCountry'] ?? false),
+                requireTargetPage: (bool) ($row['requireTargetPage'] ?? false),
+                overrideCountries: $this->overrideListOrNull(
+                    array_values(array_map('strval', (array) ($row['overrideCountries'] ?? []))),
+                ),
+                overridePages: $this->overridePagesOrNull((array) ($row['overridePages'] ?? [])),
+                overrideSocialRefererHosts: $this->overrideListOrNull(
+                    array_values(array_map('strval', (array) ($row['overrideSocialRefererHosts'] ?? []))),
+                ),
+            );
+        }
+
+        return $logs;
+    }
+
+    /**
+     * @param  list<string>  $values
+     * @return list<string>|null
+     */
+    private function overrideListOrNull(array $values): ?array
+    {
+        $filtered = array_values(array_filter($values, fn (string $v): bool => $v !== ''));
+
+        return $filtered === [] ? null : $filtered;
+    }
+
+    /**
+     * @param  array<int, mixed>  $rows
+     * @return list<string>|null
+     */
+    private function overridePagesOrNull(array $rows): ?array
+    {
+        $patterns = array_values(array_filter(
+            array_map(
+                fn ($row): string => is_array($row) ? (string) ($row['pattern'] ?? '') : (string) $row,
+                $rows,
+            ),
+            fn (string $p): bool => $p !== '',
+        ));
+
+        return $patterns === [] ? null : $patterns;
     }
 
     private function dispatchSaveNotification(NginxSaveResult $result): void

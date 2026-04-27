@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\Filament\Resources\Servers\Pages\ManageForgeSites;
 use App\Models\Server;
 use App\Models\User;
+use App\Services\Nginx\Forge\Dto\ForgeSiteCustomLog;
 use App\Services\Nginx\Forge\Dto\ForgeSiteSettings;
 use App\Services\Nginx\Forge\ForgeSiteSettingsRenderer;
 use App\Services\Ssh\Contracts\SshClient;
@@ -170,6 +171,92 @@ it('auto-reloads nginx after a successful save', function () {
     );
 
     expect($reloadRan)->toBeTrue();
+});
+
+it('saves a site with a custom log entry and persists the rendered config', function () {
+    $this->fake->shouldReturn(0, "/etc/nginx/forge-conf/3075741/site.conf\n");
+    $this->fake->shouldReturnForCommand('nginx -t', 0, "ok\n");
+
+    $server = serverForForgePage();
+
+    Livewire::test(ManageForgeSites::class, ['record' => $server->id])
+        ->call('selectSite', '3075741')
+        ->set('data.siteLoggingEnabled', true)
+        ->set('data.customLogs', [
+            [
+                'slug' => 'fb_us_offer',
+                'label' => 'Facebook → US → /offer/',
+                'requireNotBot' => false,
+                'requireFbclid' => true,
+                'requireSocialReferer' => false,
+                'requireTargetCountry' => true,
+                'requireTargetPage' => true,
+                'overrideCountries' => ['US'],
+                'overridePages' => [['pattern' => '^/offer/']],
+                'overrideSocialRefererHosts' => [],
+            ],
+        ])
+        ->call('saveSite')
+        ->assertNotified('Saved');
+
+    $managed = $this->fake->files['/etc/nginx/forge-conf/3075741/server/redteam-analytics.conf'] ?? '';
+    expect($managed)->toContain('site-3075741-fb_us_offer.log');
+});
+
+it('hydrates the custom log Repeater from a managed file with overrides', function () {
+    $rendered = (new ForgeSiteSettingsRenderer)->render('3075741', new ForgeSiteSettings(
+        siteLoggingEnabled: true,
+        customLogs: [
+            new ForgeSiteCustomLog(
+                slug: 'fb_us_offer',
+                label: 'fb_us_offer',
+                requireFbclid: true,
+                requireTargetCountry: true,
+                requireTargetPage: true,
+                overrideCountries: ['US'],
+                overridePages: ['^/offer/'],
+            ),
+        ],
+    ));
+
+    $this->fake->shouldReturn(0, "/etc/nginx/forge-conf/3075741/site.conf\n");
+    $this->fake->withFile('/etc/nginx/conf.d/redteam-forge-3075741.conf', $rendered->httpContext);
+    $this->fake->withFile('/etc/nginx/forge-conf/3075741/server/redteam-analytics.conf', $rendered->serverContext);
+
+    $server = serverForForgePage();
+
+    Livewire::test(ManageForgeSites::class, ['record' => $server->id])
+        ->call('selectSite', '3075741')
+        ->assertSet('data.siteLoggingEnabled', true)
+        ->assertSet('data.customLogs.0.slug', 'fb_us_offer')
+        ->assertSet('data.customLogs.0.requireFbclid', true)
+        ->assertSet('data.customLogs.0.requireTargetCountry', true)
+        ->assertSet('data.customLogs.0.requireTargetPage', true)
+        ->assertSet('data.customLogs.0.overrideCountries', ['US'])
+        ->assertSet('data.customLogs.0.overridePages.0.pattern', '^/offer/');
+});
+
+it('skips reserved and invalid slugs when hydrating settings from form data', function () {
+    $this->fake->shouldReturn(0, "/etc/nginx/forge-conf/3075741/site.conf\n");
+    $this->fake->shouldReturnForCommand('nginx -t', 0, "ok\n");
+
+    $server = serverForForgePage();
+
+    $component = Livewire::test(ManageForgeSites::class, ['record' => $server->id])
+        ->call('selectSite', '3075741')
+        ->set('data.siteLoggingEnabled', true)
+        ->set('data.customLogs', [
+            ['slug' => 'gate', 'label' => 'reserved', 'requireFbclid' => true],
+            ['slug' => 'BAD-SLUG', 'label' => 'invalid', 'requireFbclid' => true],
+            ['slug' => 'ok_slug', 'label' => 'good', 'requireFbclid' => true],
+        ])
+        ->call('saveSite');
+
+    $managed = $this->fake->files['/etc/nginx/forge-conf/3075741/server/redteam-analytics.conf'] ?? '';
+    expect($managed)
+        ->toContain('site-3075741-ok_slug.log')
+        ->not->toContain('site-3075741-gate.log if=$site_3075741_log_gate_hit')
+        ->not->toContain('site-3075741-BAD-SLUG.log');
 });
 
 it('disables a managed file via the disable action', function () {

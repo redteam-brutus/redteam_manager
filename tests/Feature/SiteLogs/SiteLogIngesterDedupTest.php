@@ -15,10 +15,14 @@ beforeEach(function () {
     $this->ingester = app(SiteLogIngester::class);
 });
 
-function dedupLogLine(string $requestId): string
+function dedupLogLine(string $requestId, ?string $ts = null): string
 {
+    // Default to a timestamp inside the 24h dedup window so dedup actually exercises.
+    $ts ??= now()->format('d/M/Y:H:i:s O');
+
     return sprintf(
-        '[14/Apr/2026:17:44:07 +0000] Host: example.com | IP: 1.2.3.4 | ReqID: %s | Path: / | Request URI: / | FBCLID: - | UA: "bot" | ISO: "US" | Prefetch: [document] | Turbolink: [-] | client hints: ["Chromium";v="147"] -  ["macOS"] -  [?0]',
+        '[%s] Host: example.com | IP: 1.2.3.4 | ReqID: %s | Path: / | Request URI: / | FBCLID: - | UA: "bot" | ISO: "US" | Prefetch: [document] | Turbolink: [-] | client hints: ["Chromium";v="147"] -  ["macOS"] -  [?0]',
+        $ts,
         $requestId,
     );
 }
@@ -61,7 +65,7 @@ it('re-ingesting the same file is a no-op after the first run', function () {
         ->and(SiteLogEntry::query()->count())->toBe(2);
 });
 
-it('still promotes gated=true on the gate pass even when the request_id is already in DB', function () {
+it('still attaches the gate pivot match on the gate pass even when the request_id is already in DB', function () {
     $accessPath = '/var/log/nginx/site-3075741-access.log';
     $gatePath = '/var/log/nginx/site-3075741-gate.log';
 
@@ -74,13 +78,30 @@ it('still promotes gated=true on the gate pass even when the request_id is alrea
     SiteLogEntry::factory()->for($server)->create([
         'request_id' => 'req-a',
         'site_id' => '3075741',
-        'gated' => false,
         'occurred_at' => now()->subMinutes(5),
     ]);
 
     $this->ingester->ingestServer($server);
 
-    expect(SiteLogEntry::query()->where('request_id', 'req-a')->value('gated'))->toBeTrue();
+    expect(SiteLogEntry::matchedLog('gate')->where('request_id', 'req-a')->exists())->toBeTrue();
+});
+
+it('skips already-tagged request ids on the per-slug pass to avoid redundant pivot inserts', function () {
+    $accessPath = '/var/log/nginx/site-3075741-access.log';
+    $gatePath = '/var/log/nginx/site-3075741-gate.log';
+
+    $this->fake->shouldReturn(0, $accessPath."\n".$gatePath."\n");
+    $this->fake->shouldReturnForCommand($accessPath, 0, dedupLogLine('req-a')."\n");
+    $this->fake->shouldReturnForCommand($gatePath, 0, dedupLogLine('req-a')."\n");
+
+    $server = aDedupServer();
+
+    // First run tags req-a with both access + gate.
+    $this->ingester->ingestServer($server);
+    $second = $this->ingester->ingestServer($server);
+
+    expect($second->matchCounts)->toBe(['access' => 0, 'gate' => 0])
+        ->and(SiteLogEntry::matchedLog('gate')->where('request_id', 'req-a')->count())->toBe(1);
 });
 
 it('populates browser / OS / device / is_bot on ingest', function () {

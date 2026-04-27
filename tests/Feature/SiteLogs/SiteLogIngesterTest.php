@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Models\Server;
 use App\Models\SiteLogEntry;
+use App\Models\SiteLogEntryLogMatch;
 use App\Services\SiteLogs\SiteLogIngester;
 use App\Services\Ssh\Contracts\SshClient;
 use App\Services\Ssh\Testing\FakeSshClient;
@@ -32,7 +33,7 @@ function logLine(string $requestId, string $fbclid = '-', string $ts = '14/Apr/2
     );
 }
 
-it('ingests access.log lines into site_log_entries with gated=false', function () {
+it('ingests access.log lines into site_log_entries and tags them with the access pivot match', function () {
     $accessPath = '/var/log/nginx/site-3075741-access.log';
     $content = logLine('req-a')."\n".logLine('req-b')."\n";
 
@@ -43,17 +44,20 @@ it('ingests access.log lines into site_log_entries with gated=false', function (
     $report = $this->ingester->ingestServer($server);
 
     expect($report->rowsInserted)->toBe(2)
-        ->and($report->linesSkipped)->toBe(0);
+        ->and($report->linesSkipped)->toBe(0)
+        ->and($report->matchCounts)->toMatchArray(['access' => 2]);
 
     expect(SiteLogEntry::query()->pluck('request_id')->all())
         ->toEqualCanonicalizing(['req-a', 'req-b']);
 
-    expect(SiteLogEntry::query()->where('request_id', 'req-a')->first())
-        ->gated->toBeFalse()
-        ->and(SiteLogEntry::query()->value('site_id'))->toBe('3075741');
+    $reqA = SiteLogEntry::query()->where('request_id', 'req-a')->firstOrFail();
+
+    expect(SiteLogEntry::query()->value('site_id'))->toBe('3075741')
+        ->and($reqA->logMatches()->pluck('log_slug')->all())->toBe(['access'])
+        ->and(SiteLogEntry::matchedLog('gate')->exists())->toBeFalse();
 });
 
-it('promotes gated=true for request ids that also appear in gate.log', function () {
+it('attaches a gate pivot match for request ids that also appear in gate.log', function () {
     $accessPath = '/var/log/nginx/site-3075741-access.log';
     $gatePath = '/var/log/nginx/site-3075741-gate.log';
 
@@ -62,10 +66,14 @@ it('promotes gated=true for request ids that also appear in gate.log', function 
     $this->fake->shouldReturnForCommand($gatePath, 0, logLine('req-b')."\n");
 
     $server = aLogServer();
-    $this->ingester->ingestServer($server);
+    $report = $this->ingester->ingestServer($server);
 
-    expect(SiteLogEntry::query()->where('request_id', 'req-a')->value('gated'))->toBeFalse()
-        ->and(SiteLogEntry::query()->where('request_id', 'req-b')->value('gated'))->toBeTrue();
+    $reqA = SiteLogEntry::query()->where('request_id', 'req-a')->firstOrFail();
+    $reqB = SiteLogEntry::query()->where('request_id', 'req-b')->firstOrFail();
+
+    expect($reqA->logMatches()->pluck('log_slug')->all())->toEqualCanonicalizing(['access'])
+        ->and($reqB->logMatches()->pluck('log_slug')->all())->toEqualCanonicalizing(['access', 'gate'])
+        ->and($report->matchCounts)->toMatchArray(['access' => 2, 'gate' => 1]);
 });
 
 it('is idempotent across successive ingests (request_id is the dedup key)', function () {
@@ -81,10 +89,11 @@ it('is idempotent across successive ingests (request_id is the dedup key)', func
     $this->ingester->ingestServer($server);
     $this->ingester->ingestServer($server);
 
-    expect(SiteLogEntry::query()->count())->toBe(2);
+    expect(SiteLogEntry::query()->count())->toBe(2)
+        ->and(SiteLogEntryLogMatch::query()->where('log_slug', 'access')->count())->toBe(2);
 });
 
-it('a second ingest with the row now appearing in gate.log promotes gated without inserting dupes', function () {
+it('a second ingest with the row now appearing in gate.log attaches the gate pivot without inserting dupes', function () {
     $accessPath = '/var/log/nginx/site-3075741-access.log';
     $gatePath = '/var/log/nginx/site-3075741-gate.log';
 
@@ -94,7 +103,7 @@ it('a second ingest with the row now appearing in gate.log promotes gated withou
     $server = aLogServer();
     $this->ingester->ingestServer($server);
 
-    expect(SiteLogEntry::query()->where('request_id', 'req-a')->value('gated'))->toBeFalse();
+    expect(SiteLogEntry::matchedLog('gate')->exists())->toBeFalse();
 
     // second ingest: gate.log now exists with the same request id
     $this->fake->shouldReturn(0, $accessPath."\n".$gatePath."\n");
@@ -103,7 +112,23 @@ it('a second ingest with the row now appearing in gate.log promotes gated withou
     $this->ingester->ingestServer($server);
 
     expect(SiteLogEntry::query()->count())->toBe(1)
-        ->and(SiteLogEntry::query()->where('request_id', 'req-a')->value('gated'))->toBeTrue();
+        ->and(SiteLogEntry::matchedLog('gate')->where('request_id', 'req-a')->exists())->toBeTrue();
+});
+
+it('ingests custom-slug log files as tag-only passes (no new rows)', function () {
+    $accessPath = '/var/log/nginx/site-3075741-access.log';
+    $fbPath = '/var/log/nginx/site-3075741-fb_only.log';
+
+    $this->fake->shouldReturn(0, $accessPath."\n".$fbPath."\n");
+    $this->fake->shouldReturnForCommand($accessPath, 0, logLine('req-a')."\n".logLine('req-b')."\n");
+    $this->fake->shouldReturnForCommand($fbPath, 0, logLine('req-b')."\n");
+
+    $server = aLogServer();
+    $report = $this->ingester->ingestServer($server);
+
+    expect($report->matchCounts)->toMatchArray(['access' => 2, 'fb_only' => 1])
+        ->and(SiteLogEntry::query()->count())->toBe(2)
+        ->and(SiteLogEntry::matchedLog('fb_only')->pluck('request_id')->all())->toBe(['req-b']);
 });
 
 it('counts unparseable lines as skipped without failing the batch', function () {

@@ -25,9 +25,10 @@ class SiteLogEntriesTable
     public static function configure(Table $table): Table
     {
         return $table
+            ->modifyQueryUsing(fn (Builder $query): Builder => $query->with('logMatches'))
             ->columns([
                 TextColumn::make('occurred_at')
-                    ->label('When')
+                    ->label('Date')
                     ->since()
                     ->sortable()
                     ->tooltip(fn (SiteLogEntry $record): ?string => $record->occurred_at?->toDateTimeString()),
@@ -35,6 +36,29 @@ class SiteLogEntriesTable
                 TextColumn::make('server.name')
                     ->label('Server')
                     ->sortable(),
+
+                TextColumn::make('host')
+                    ->label('Host')
+                    ->searchable()
+                    ->limit(32)
+                    ->tooltip(fn (SiteLogEntry $record): ?string => $record->host),
+
+                TextColumn::make('remote_addr')
+                    ->label('IP')
+                    ->fontFamily('mono')
+                    ->searchable(),
+
+                TextColumn::make('iso_country')
+                    ->label('Country')
+                    ->badge()
+                    ->color('gray'),
+
+                TextColumn::make('request_uri')
+                    ->label('Route')
+                    ->limit(40)
+                    ->searchable()
+                    ->sortable()
+                    ->tooltip(fn (SiteLogEntry $record): ?string => $record->request_uri),
 
                 TextColumn::make('site_id')
                     ->label('Site')
@@ -50,30 +74,12 @@ class SiteLogEntriesTable
                     ->placeholder('—')
                     ->toggleable(isToggledHiddenByDefault: true),
 
-                TextColumn::make('host')
-                    ->label('Host')
-                    ->searchable()
-                    ->limit(32)
-                    ->tooltip(fn (SiteLogEntry $record): ?string => $record->host)
-                    ->toggleable(isToggledHiddenByDefault: true),
-
-                TextColumn::make('remote_addr')
-                    ->label('IP')
-                    ->fontFamily('mono')
-                    ->searchable()
-                    ->toggleable(isToggledHiddenByDefault: true),
-
-                TextColumn::make('iso_country')
-                    ->label('Country')
+                TextColumn::make('log_matches')
+                    ->label('Logs')
                     ->badge()
                     ->color('gray')
-                    ->toggleable(isToggledHiddenByDefault: true),
-
-                TextColumn::make('gated')
-                    ->label('Gated')
-                    ->badge()
-                    ->color(fn (bool $state): string => $state ? 'success' : 'gray')
-                    ->formatStateUsing(fn (bool $state): string => $state ? 'Gated' : '—')
+                    ->state(fn (SiteLogEntry $record): array => $record->logMatches->pluck('log_slug')->all())
+                    ->placeholder('—')
                     ->toggleable(isToggledHiddenByDefault: true),
 
                 TextColumn::make('fbclid')
@@ -85,7 +91,7 @@ class SiteLogEntriesTable
                     ->toggleable(isToggledHiddenByDefault: true),
 
                 TextColumn::make('uri')
-                    ->label('URI')
+                    ->label('Path')
                     ->limit(40)
                     ->tooltip(fn (SiteLogEntry $record): ?string => $record->uri)
                     ->toggleable(isToggledHiddenByDefault: true),
@@ -138,10 +144,20 @@ class SiteLogEntriesTable
                     ->searchable()
                     ->options(fn (): array => self::siteIdOptions()),
 
-                TernaryFilter::make('gated')
-                    ->placeholder('Any')
-                    ->trueLabel('Gated')
-                    ->falseLabel('Not gated'),
+                SelectFilter::make('log_slug')
+                    ->label('Log')
+                    ->searchable()
+                    ->options(fn (): array => self::distinctLogSlugOptions())
+                    ->query(function (Builder $query, array $data): Builder {
+                        if (blank($data['value'] ?? null)) {
+                            return $query;
+                        }
+
+                        return $query->whereHas(
+                            'logMatches',
+                            fn (Builder $q): Builder => $q->where('log_slug', $data['value']),
+                        );
+                    }),
 
                 TernaryFilter::make('fbclid')
                     ->label('FBCLID')
@@ -236,6 +252,23 @@ class SiteLogEntriesTable
         }
 
         return app(DomainCache::class)->for($server)[$record->site_id] ?? [];
+    }
+
+    /**
+     * Distinct log slugs from the pivot table as SelectFilter options.
+     *
+     * @return array<string, string>
+     */
+    private static function distinctLogSlugOptions(): array
+    {
+        /** @var list<string> $values */
+        $values = DB::table('site_log_entry_log_matches')
+            ->distinct()
+            ->orderBy('log_slug')
+            ->pluck('log_slug')
+            ->all();
+
+        return array_combine($values, $values);
     }
 
     /**
