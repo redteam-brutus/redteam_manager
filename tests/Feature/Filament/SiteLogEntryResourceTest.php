@@ -211,11 +211,11 @@ it('narrows rows when filtering by is_bot=true', function () {
         ->assertCanNotSeeTableRecords($humans);
 });
 
-it('hides secondary columns by default so the default view is just When + Server', function () {
+it('hides secondary columns by default so the default view is Date+Server+Host+IP+Country+Route', function () {
     $server = Server::factory()->create();
-    SiteLogEntry::factory()->for($server)->today()->create(['site_id' => '1111', 'host' => 'secret-host.example']);
+    SiteLogEntry::factory()->for($server)->today()->create(['fbclid' => 'zzfbclidsecretzz9876']);
 
     Livewire::test(ListSiteLogEntries::class)
         ->assertSuccessful()
-        ->assertDontSee('secret-host.example'); // host column is hidden by default → row value not rendered
+        ->assertDontSee('zzfbclidsecretzz9876'); // FB column is hidden by default → fbclid value not rendered
 });

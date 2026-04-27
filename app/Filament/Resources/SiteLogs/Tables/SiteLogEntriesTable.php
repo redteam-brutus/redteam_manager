@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\SiteLogs\Tables;
 
+use App\Models\AppSetting;
 use App\Models\Server;
 use App\Models\SiteLogEntry;
 use App\Services\Nginx\DomainCache;
@@ -29,9 +30,11 @@ class SiteLogEntriesTable
             ->columns([
                 TextColumn::make('occurred_at')
                     ->label('Date')
-                    ->since()
+                    ->dateTime('Y-m-d H:i:s', AppSetting::timezone())
                     ->sortable()
-                    ->tooltip(fn (SiteLogEntry $record): ?string => $record->occurred_at?->toDateTimeString()),
+                    ->tooltip(fn (SiteLogEntry $record): ?string => $record->occurred_at
+                        ?->setTimezone(AppSetting::timezone())
+                        ->format('Y-m-d H:i:s T')),
 
                 TextColumn::make('server.name')
                     ->label('Server')
