@@ -23,7 +23,9 @@ class LogViewer
     public function list(Server $server): array
     {
         $cmd = 'ls -1 '.self::LOG_ROOT.'/*.log '.self::LOG_ROOT.'/*.log.1 2>/dev/null';
-        $result = $this->ssh->run($server, $cmd);
+        $result = $server->use_sudo
+            ? $this->ssh->runPrivileged($server, $cmd)
+            : $this->ssh->run($server, $cmd);
 
         $paths = array_values(array_filter(
             array_map('trim', preg_split('/\r?\n/', $result->stdout) ?: []),

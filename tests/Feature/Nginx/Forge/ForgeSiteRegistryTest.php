@@ -250,7 +250,8 @@ it('renderer emits a site-scoped $has_fbclid helper only when gateHasFbclid is o
         gateIsTargetPage: true,
     ));
 
-    expect($with->httpContext)->toContain('map $arg_fbclid $site_3075741_has_fbclid')
+    expect($with->httpContext)->toContain('map $site_3075741_fbclid_value $site_3075741_has_fbclid')
+        ->and($with->httpContext)->toContain('map $request_uri $site_3075741_fbclid_value')
         ->and($without->httpContext)->not->toContain('has_fbclid');
 });
 
@@ -262,7 +263,7 @@ it('emits the three-map chain when gateHasFbclid is on and socialRefererHosts is
         socialRefererHosts: ['facebook.com', 'instagram.com'],
     ));
 
-    expect($rendered->httpContext)->toContain('map $arg_fbclid $site_3075741_has_fbclid_arg')
+    expect($rendered->httpContext)->toContain('map $site_3075741_fbclid_value $site_3075741_has_fbclid_arg')
         ->and($rendered->httpContext)->toContain('map $http_referer $site_3075741_has_social_referer')
         ->and($rendered->httpContext)->toContain('map "$site_3075741_has_fbclid_arg$site_3075741_has_social_referer" $site_3075741_has_fbclid')
         ->and($rendered->httpContext)->toContain('"~*^https?://([^/]*\.)?facebook\.com(/|$)" 1;')
@@ -277,9 +278,21 @@ it('keeps the single-map fbclid form when socialRefererHosts is empty', function
         gateHasFbclid: true,
     ));
 
-    expect($rendered->httpContext)->toContain('map $arg_fbclid $site_3075741_has_fbclid')
+    expect($rendered->httpContext)->toContain('map $site_3075741_fbclid_value $site_3075741_has_fbclid')
         ->and($rendered->httpContext)->not->toContain('has_fbclid_arg')
         ->and($rendered->httpContext)->not->toContain('has_social_referer');
+});
+
+it('emits a $request_uri-based fbclid_value map so SPA rewrites that clear $args do not strip the captured value', function () {
+    $rendered = (new ForgeSiteSettingsRenderer)->render('3075741', new ForgeSiteSettings(
+        siteLoggingEnabled: true,
+    ));
+
+    expect($rendered->httpContext)
+        ->toContain('map $request_uri $site_3075741_fbclid_value')
+        ->toContain('"~[?&]fbclid=(?<site_3075741_fbclid_capture>[^&]*)" $site_3075741_fbclid_capture;')
+        ->toContain('FBCLID: $site_3075741_fbclid_value')
+        ->not->toContain('FBCLID: $arg_fbclid');
 });
 
 it('does not emit a social referer map when gateHasFbclid is off (even if hosts are set)', function () {
@@ -403,7 +416,7 @@ it('save writes the http-context map file to conf.d when gates are on', function
     $serverFile = $this->fake->files['/etc/nginx/forge-conf/3075741/server/redteam-analytics.conf'] ?? null;
 
     expect($httpFile)->not->toBeNull()
-        ->and($httpFile)->toContain('map $arg_fbclid $site_3075741_has_fbclid')
+        ->and($httpFile)->toContain('map $site_3075741_fbclid_value $site_3075741_has_fbclid')
         ->and($httpFile)->toContain('map $site_3075741_has_fbclid $site_3075741_analytics_script')
         ->and($serverFile)->not->toBeNull()
         ->and($serverFile)->toContain('sub_filter \'</head>\' $site_3075741_analytics_script;')

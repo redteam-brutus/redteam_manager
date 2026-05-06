@@ -118,7 +118,7 @@ it('widens helper-union for fbclid-arg even when site-level gateHasFbclid is off
         ],
     ));
 
-    expect($rendered->httpContext)->toContain('map $arg_fbclid $site_1_has_fbclid_arg');
+    expect($rendered->httpContext)->toContain('map $site_1_fbclid_value $site_1_has_fbclid_arg');
     expect($rendered->httpContext)->not->toContain('$site_1_has_fbclid {');
 });
 

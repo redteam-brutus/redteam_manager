@@ -41,6 +41,28 @@ it('drops ls lines that do not match the log-root pattern', function () {
         ->and($logs[0]->path)->toBe('/var/log/nginx/access.log');
 });
 
+it('lists log files via sudo when the server uses sudo', function () {
+    $this->fake->shouldReturn(0, "/var/log/nginx/access.log\n");
+
+    $server = aLoggedServer();
+    $server->forceFill(['use_sudo' => true, 'sudo_password' => 'hunter2'])->save();
+
+    $logs = $this->viewer->list($server);
+
+    expect($logs)->toHaveCount(1)
+        ->and($this->fake->privilegedCommands)->not->toBeEmpty()
+        ->and($this->fake->lastSudoPassword)->toBe('hunter2');
+});
+
+it('lists log files without sudo when the server does not use sudo', function () {
+    $this->fake->shouldReturn(0, "/var/log/nginx/access.log\n");
+
+    $this->viewer->list(aLoggedServer(['use_sudo' => false]));
+
+    expect($this->fake->privilegedCommands)->toBeEmpty()
+        ->and($this->fake->commands)->not->toBeEmpty();
+});
+
 it('runs plain tail when the server does not use sudo', function () {
     $this->fake->shouldReturn(0, "line1\nline2\n");
 

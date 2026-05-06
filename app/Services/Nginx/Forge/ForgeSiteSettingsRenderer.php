@@ -13,7 +13,14 @@ class ForgeSiteSettingsRenderer
 {
     private const TAG_WHITELIST = ['</head>', '</body>', '<head>', '<body>'];
 
-    private const VERBOSE_LOG_FORMAT = '[$time_local] Host: $host | IP: $remote_addr | ReqID: $request_id | Path: $uri | Request URI: $request_uri | FBCLID: $arg_fbclid | UA: "$http_user_agent" | ISO: "$http_cf_ipcountry" | Prefetch: [$http_sec_fetch_dest] | Turbolink: [$http_x_requested_with] | client hints: [$http_sec_ch_ua] -  [$http_sec_ch_ua_platform] -  [$http_sec_ch_ua_mobile]';
+    /**
+     * Per-site FBCLID source variable. Resolved against $request_uri (immutable) so SPA-style
+     * rewrites that clear $args (e.g. `rewrite ^.*$ /index.html?`) don't strip the captured value.
+     * The verbose log_format and all fbclid helper maps reference this var instead of $arg_fbclid.
+     */
+    private const FBCLID_VALUE_VAR = 'fbclid_value';
+
+    private const VERBOSE_LOG_FORMAT = '[$time_local] Host: $host | IP: $remote_addr | ReqID: $request_id | Path: $uri | Request URI: $request_uri | FBCLID: $%s | UA: "$http_user_agent" | ISO: "$http_cf_ipcountry" | Prefetch: [$http_sec_fetch_dest] | Turbolink: [$http_x_requested_with] | client hints: [$http_sec_ch_ua] -  [$http_sec_ch_ua_platform] -  [$http_sec_ch_ua_mobile]';
 
     /**
      * Fixed-order signal table. Gate field → nginx variable name + required value + whether the
@@ -68,6 +75,8 @@ class ForgeSiteSettingsRenderer
         $hasFbclidVar = "site_{$siteId}_has_fbclid";
         $targetCountryVar = "site_{$siteId}_is_target_country";
         $targetPageVar = "site_{$siteId}_is_target_page";
+        $fbclidValueVar = "site_{$siteId}_".self::FBCLID_VALUE_VAR;
+        $fbclidNeedsHelper = $union['has_fbclid_arg'] || $union['has_fbclid_simple'] || $union['has_fbclid_composite'];
 
         $httpParts = [
             '# Managed by redteam-manager. Do not edit by hand.',
@@ -86,6 +95,21 @@ class ForgeSiteSettingsRenderer
         $httpHasContent = false;
         $serverHasContent = false;
 
+        // FBCLID source map. Extracts the fbclid query value from $request_uri (the original request
+        // line, immutable across rewrites) instead of $arg_fbclid (parsed from $args, which SPA-style
+        // rewrites like `rewrite ^.*$ /index.html?` clear). Emitted whenever the verbose log_format
+        // or any fbclid helper would otherwise reference $arg_fbclid.
+        if ($settings->siteLoggingEnabled || $fbclidNeedsHelper) {
+            $captureName = "site_{$siteId}_fbclid_capture";
+            $httpParts[] = "# --- \${$fbclidValueVar} (extracted from \$request_uri) ---";
+            $httpParts[] = "map \$request_uri \${$fbclidValueVar} {";
+            $httpParts[] = '    default "";';
+            $httpParts[] = sprintf('    "~[?&]fbclid=(?<%s>[^&]*)" $%s;', $captureName, $captureName);
+            $httpParts[] = '}';
+            $httpParts[] = '';
+            $httpHasContent = true;
+        }
+
         // Helper variable maps. Driven by the helper-union of (site-level gate flags) ∪ (any custom
         // log's require flags). Custom logs widen the set so a per-log condition can reference a
         // helper var even when no site-level gate is enabled. Each helper emits independently —
@@ -96,7 +120,7 @@ class ForgeSiteSettingsRenderer
             $hasSocialRefererVar = "site_{$siteId}_has_social_referer";
 
             $httpParts[] = "# --- \${$hasFbclidVar} = fbclid OR social referer ---";
-            $httpParts[] = "map \$arg_fbclid \${$hasFbclidArgVar} {";
+            $httpParts[] = "map \${$fbclidValueVar} \${$hasFbclidArgVar} {";
             $httpParts[] = '    default 1;';
             $httpParts[] = '    ""      0;';
             $httpParts[] = '}';
@@ -127,7 +151,7 @@ class ForgeSiteSettingsRenderer
         } else {
             if ($union['has_fbclid_simple']) {
                 $httpParts[] = "# --- \${$hasFbclidVar} helper ---";
-                $httpParts[] = "map \$arg_fbclid \${$hasFbclidVar} {";
+                $httpParts[] = "map \${$fbclidValueVar} \${$hasFbclidVar} {";
                 $httpParts[] = '    default 1;';
                 $httpParts[] = '    ""      0;';
                 $httpParts[] = '}';
@@ -138,7 +162,7 @@ class ForgeSiteSettingsRenderer
             if ($union['has_fbclid_arg']) {
                 $hasFbclidArgVar = "site_{$siteId}_has_fbclid_arg";
                 $httpParts[] = "# --- \${$hasFbclidArgVar} helper ---";
-                $httpParts[] = "map \$arg_fbclid \${$hasFbclidArgVar} {";
+                $httpParts[] = "map \${$fbclidValueVar} \${$hasFbclidArgVar} {";
                 $httpParts[] = '    default 1;';
                 $httpParts[] = '    ""      0;';
                 $httpParts[] = '}';
@@ -244,7 +268,7 @@ class ForgeSiteSettingsRenderer
             $httpParts[] = sprintf(
                 "log_format %s escape=none '%s';",
                 $logFormatName,
-                $this->escapeSingleQuoted(self::VERBOSE_LOG_FORMAT),
+                $this->escapeSingleQuoted(sprintf(self::VERBOSE_LOG_FORMAT, $fbclidValueVar)),
             );
             $httpParts[] = '';
             $httpHasContent = true;
