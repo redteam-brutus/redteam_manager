@@ -7,6 +7,7 @@ use App\Filament\Resources\SiteLogs\Tables\SiteLogEntriesTable;
 use App\Models\Server;
 use App\Models\SiteLogEntry;
 use App\Models\User;
+use App\Services\Nginx\DomainCache;
 use App\Services\Ssh\Contracts\SshClient;
 use App\Services\Ssh\Testing\FakeSshClient;
 use Illuminate\Support\Facades\Cache;
@@ -132,6 +133,8 @@ it('labels site filter options with the site\'s domains so operators can search 
         "/etc/nginx/forge-conf/3075741/loveable-x.on-forge.com\n",
     );
 
+    app(DomainCache::class)->sync($server);
+
     $options = SiteLogEntriesTable::siteIdOptions();
 
     expect($options)->toHaveKey('3075741')
@@ -148,7 +151,7 @@ it('falls back to bare site_id when domains cannot be resolved', function () {
     expect($options)->toBe(['9999999' => '9999999']);
 });
 
-it('renders domain tags on rows (when the Domains column is toggled on) via the DomainCache', function () {
+it('renders domain tags on rows (when the Domains column is toggled on) via the persisted server_sites catalog', function () {
     $server = Server::factory()->create([
         'host_fingerprint' => 'fingerprint-known',
         'name' => 'edge-01',
@@ -160,6 +163,8 @@ it('renders domain tags on rows (when the Domains column is toggled on) via the 
         0,
         "/etc/nginx/forge-conf/3075741/test.bestpropfirmsuk.com\n",
     );
+
+    app(DomainCache::class)->sync($server);
 
     Livewire::test(ListSiteLogEntries::class)
         ->toggleAllTableColumns()

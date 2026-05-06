@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Console\Commands;
 
 use App\Models\Server;
+use App\Services\Nginx\DomainCache;
 use App\Services\SiteLogs\SiteLogIngester;
 use Illuminate\Console\Attributes\Description;
 use Illuminate\Console\Attributes\Signature;
@@ -15,7 +16,7 @@ use Throwable;
 #[Description('Pulls access.log + gate.log from every registered server and upserts rows into site_log_entries (dedup on request_id).')]
 class IngestSiteLogs extends Command
 {
-    public function handle(SiteLogIngester $ingester): int
+    public function handle(SiteLogIngester $ingester, DomainCache $domains): int
     {
         $totalInserted = 0;
         $totalUpdated = 0;
@@ -31,6 +32,10 @@ class IngestSiteLogs extends Command
 
                 continue;
             }
+
+            // Refresh persisted server_sites so dashboard widgets and Filament filter dropdowns
+            // serve domains from the DB, never SSH on render.
+            $domains->sync($server);
 
             $totalInserted += $report->rowsInserted;
             $totalUpdated += $report->rowsUpdated;

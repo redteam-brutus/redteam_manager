@@ -55,7 +55,7 @@
                     <span class="font-mono text-xs text-gray-600 dark:text-gray-400">{{ $selectedPath }}</span>
                 </x-slot>
 
-                <div wire:poll.2000ms="tick">
+                <div wire:poll.10000ms="tick">
                     @if (empty($this->filteredLines))
                         <p class="py-4 text-sm text-gray-500 dark:text-gray-400">
                             No lines to show.

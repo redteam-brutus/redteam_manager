@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Models\Server;
 use App\Services\Dashboard\RecentActivityAggregator;
+use App\Services\Nginx\DomainCache;
 use App\Services\Ssh\Contracts\SshClient;
 use App\Services\Ssh\Testing\FakeSshClient;
 use Illuminate\Support\Facades\Cache;
@@ -39,7 +40,7 @@ it('returns the most recent managed edits across servers, sorted desc', function
 });
 
 it('tags edits with the first known forge domain for the site', function () {
-    Server::factory()->create(['host_fingerprint' => 'fingerprint-known']);
+    $server = Server::factory()->create(['host_fingerprint' => 'fingerprint-known']);
 
     $this->fake->shouldReturnForCommand(
         '-printf',
@@ -51,6 +52,8 @@ it('tags edits with the first known forge domain for the site', function () {
         0,
         "/etc/nginx/forge-conf/3075741/test.bestpropfirmsuk.com\n",
     );
+
+    app(DomainCache::class)->sync($server);
 
     $edits = app(RecentActivityAggregator::class)->latest();
 

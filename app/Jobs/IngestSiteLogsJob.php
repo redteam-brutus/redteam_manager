@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Jobs;
 
 use App\Models\Server;
+use App\Services\Dashboard\SiteTrafficAggregator;
+use App\Services\Nginx\DomainCache;
 use App\Services\SiteLogs\SiteLogIngester;
 use App\Services\SiteLogs\SiteLogRefresher;
 use Illuminate\Bus\Queueable;
@@ -24,7 +26,7 @@ class IngestSiteLogsJob
     use Dispatchable;
     use Queueable;
 
-    public function handle(SiteLogIngester $ingester): void
+    public function handle(SiteLogIngester $ingester, DomainCache $domains): void
     {
         $start = microtime(true);
         $totals = [
@@ -53,6 +55,10 @@ class IngestSiteLogsJob
                         }
                         $totals['skipped_samples'][] = "{$server->name}: {$sample}";
                     }
+
+                    // Refresh persisted server_sites so dashboard widgets and filter dropdowns
+                    // can resolve domains without opening their own SSH sessions on render.
+                    $domains->sync($server);
                 } catch (Throwable $e) {
                     $totals['errors'][] = "{$server->name}: {$e->getMessage()}";
                 }
@@ -63,6 +69,10 @@ class IngestSiteLogsJob
 
             Cache::put(SiteLogRefresher::LAST_REPORT_KEY, $totals, 86400);
             Cache::put(SiteLogRefresher::LAST_RUN_KEY, $totals['ran_at'], 86400);
+
+            if ($totals['inserted'] > 0 || $totals['updated'] > 0) {
+                Cache::forget(SiteTrafficAggregator::SNAPSHOT_CACHE_KEY);
+            }
         } finally {
             Cache::lock(SiteLogRefresher::LOCK_KEY)->forceRelease();
         }

@@ -19,10 +19,18 @@ use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Filters\TernaryFilter;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 class SiteLogEntriesTable
 {
+    /**
+     * Filter dropdown options scan the full site_log_entries / pivot table on every page load.
+     * The data only changes when ingestion runs (~minute cadence), so a short TTL keeps the
+     * dropdowns responsive without showing meaningfully stale options.
+     */
+    private const FILTER_OPTIONS_TTL = 60;
+
     public static function configure(Table $table): Table
     {
         return $table
@@ -264,14 +272,20 @@ class SiteLogEntriesTable
      */
     private static function distinctLogSlugOptions(): array
     {
-        /** @var list<string> $values */
-        $values = DB::table('site_log_entry_log_matches')
-            ->distinct()
-            ->orderBy('log_slug')
-            ->pluck('log_slug')
-            ->all();
+        return Cache::remember(
+            'site-log-entries.filters.log-slugs',
+            self::FILTER_OPTIONS_TTL,
+            function (): array {
+                /** @var list<string> $values */
+                $values = DB::table('site_log_entry_log_matches')
+                    ->distinct()
+                    ->orderBy('log_slug')
+                    ->pluck('log_slug')
+                    ->all();
 
-        return array_combine($values, $values);
+                return array_combine($values, $values);
+            },
+        );
     }
 
     /**
@@ -281,16 +295,22 @@ class SiteLogEntriesTable
      */
     private static function distinctOptions(string $column): array
     {
-        /** @var list<string> $values */
-        $values = DB::table('site_log_entries')
-            ->whereNotNull($column)
-            ->where($column, '!=', '')
-            ->distinct()
-            ->orderBy($column)
-            ->pluck($column)
-            ->all();
+        return Cache::remember(
+            "site-log-entries.filters.distinct.{$column}",
+            self::FILTER_OPTIONS_TTL,
+            function () use ($column): array {
+                /** @var list<string> $values */
+                $values = DB::table('site_log_entries')
+                    ->whereNotNull($column)
+                    ->where($column, '!=', '')
+                    ->distinct()
+                    ->orderBy($column)
+                    ->pluck($column)
+                    ->all();
 
-        return array_combine($values, $values);
+                return array_combine($values, $values);
+            },
+        );
     }
 
     /**
@@ -301,32 +321,38 @@ class SiteLogEntriesTable
      */
     public static function siteIdOptions(): array
     {
-        $rows = DB::table('site_log_entries')
-            ->select('server_id', 'site_id')
-            ->distinct()
-            ->orderBy('site_id')
-            ->get();
+        return Cache::remember(
+            'site-log-entries.filters.site-ids',
+            self::FILTER_OPTIONS_TTL,
+            function (): array {
+                $rows = DB::table('site_log_entries')
+                    ->select('server_id', 'site_id')
+                    ->distinct()
+                    ->orderBy('site_id')
+                    ->get();
 
-        if ($rows->isEmpty()) {
-            return [];
-        }
+                if ($rows->isEmpty()) {
+                    return [];
+                }
 
-        $servers = Server::query()
-            ->whereIn('id', $rows->pluck('server_id')->unique()->all())
-            ->get()
-            ->keyBy('id');
+                $servers = Server::query()
+                    ->whereIn('id', $rows->pluck('server_id')->unique()->all())
+                    ->get()
+                    ->keyBy('id');
 
-        $cache = app(DomainCache::class);
-        $options = [];
+                $cache = app(DomainCache::class);
+                $options = [];
 
-        foreach ($rows as $row) {
-            $siteId = (string) $row->site_id;
-            $server = $servers->get($row->server_id);
-            $domains = $server !== null ? ($cache->for($server)[$siteId] ?? []) : [];
-            $options[$siteId] = self::formatSiteLabel($siteId, $domains);
-        }
+                foreach ($rows as $row) {
+                    $siteId = (string) $row->site_id;
+                    $server = $servers->get($row->server_id);
+                    $domains = $server !== null ? ($cache->for($server)[$siteId] ?? []) : [];
+                    $options[$siteId] = self::formatSiteLabel($siteId, $domains);
+                }
 
-        return $options;
+                return $options;
+            },
+        );
     }
 
     /**
